@@ -41,7 +41,7 @@ type Email = {
   confidence: number;
   status: EmailStatus;
   suggested_reply: string;
-  received_at: string; // ISO string
+  received_at: string;
 };
 
 type ChartPoint = { date: string; pending: number };
@@ -51,9 +51,9 @@ export default function MetricsCards() {
   const [emails, setEmails] = useState<Email[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [chartView, setChartView] = useState<"daily" | "weekly" | "monthly">("daily");
+  const [chartView, setChartView] =
+    useState<"daily" | "weekly" | "monthly">("daily");
 
-  // --- Fetch metrics + emails from backend ---
   async function fetchData() {
     try {
       setLoading(true);
@@ -75,7 +75,6 @@ export default function MetricsCards() {
         emailsToday: metricsData.emails_today,
         autoSent: metricsData.auto_count,
         manualReview: metricsData.review_count,
-        // average confidence over ALL emails
         avgConfidence: metricsData.avg_confidence ?? 0,
       });
 
@@ -104,9 +103,6 @@ export default function MetricsCards() {
     return "bg-green-100";
   };
 
-  // -------------------------
-  // Build REAL chart data
-  // -------------------------
   const reviewEmails = emails.filter((e) => e.status === "review");
 
   function sameDay(a: Date, b: Date) {
@@ -121,11 +117,10 @@ export default function MetricsCards() {
     const today = new Date();
     const days: ChartPoint[] = [];
 
-    // last 7 days, oldest → newest
     for (let i = 6; i >= 0; i--) {
       const d = new Date(today);
       d.setDate(today.getDate() - i);
-      const label = d.toLocaleDateString(undefined, { weekday: "short" }); // Mon, Tue…
+      const label = d.toLocaleDateString(undefined, { weekday: "short" });
 
       const count = reviewEmails.filter((e) => {
         const t = new Date(e.received_at);
@@ -142,7 +137,6 @@ export default function MetricsCards() {
     const today = new Date();
     const weeks: ChartPoint[] = [];
 
-    // last 4 weeks: 0 = this week, 1 = last week, ...
     for (let w = 3; w >= 0; w--) {
       const start = new Date(today);
       start.setDate(today.getDate() - 7 * w);
@@ -163,28 +157,23 @@ export default function MetricsCards() {
 
       weeks.push({ date: label, pending: count });
     }
-
-  return weeks;
+    return weeks;
   }
 
   function buildMonthlyData(): ChartPoint[] {
     const today = new Date();
     const months: ChartPoint[] = [];
 
-    // last 6 months: oldest → newest
     for (let m = 5; m >= 0; m--) {
       const d = new Date(today);
       d.setMonth(today.getMonth() - m);
-      d.setDate(1); // first day of month
+      d.setDate(1);
 
       const year = d.getFullYear();
       const month = d.getMonth();
 
-      const label = d.toLocaleDateString(undefined, {
-        month: "short",
-      }); // Jan, Feb…
+      const label = d.toLocaleDateString(undefined, { month: "short" });
 
-      // start = first day of month, end = first day of next month
       const start = new Date(year, month, 1);
       const end = new Date(year, month + 1, 1);
 
@@ -199,16 +188,41 @@ export default function MetricsCards() {
     return months;
   }
 
-  const chartData: ChartPoint[] =
+  const chartData =
     chartView === "daily"
       ? buildDailyData()
       : chartView === "weekly"
       ? buildWeeklyData()
       : buildMonthlyData();
 
-  // -------------------------
-  // Loading / error / render
-  // -------------------------
+  const oldestPendingLabel = (() => {
+    if (reviewEmails.length === 0) return "No emails pending review";
+
+    const now = new Date();
+    const oldest = reviewEmails.reduce((min, e) => {
+      const t = new Date(e.received_at);
+      return t < min ? t : min;
+    }, new Date(reviewEmails[0].received_at));
+
+    const diffMs = now.getTime() - oldest.getTime();
+    const diffMinutes = Math.floor(diffMs / 60000);
+
+    if (diffMinutes < 1) return "Just now";
+    if (diffMinutes < 60) return `${diffMinutes} min ago`;
+
+    const diffHours = Math.floor(diffMinutes / 60);
+    const remMinutes = diffMinutes % 60;
+
+    if (diffHours < 24) {
+      if (remMinutes === 0)
+        return `${diffHours} hr${diffHours === 1 ? "" : "s"} ago`;
+      return `${diffHours} hr${diffHours === 1 ? "" : "s"} ${remMinutes} min ago`;
+    }
+
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays} day${diffDays === 1 ? "" : "s"} ago`;
+  })();
+
   if (loading && !metrics && !error) {
     return (
       <div className="space-y-4">
@@ -241,7 +255,7 @@ export default function MetricsCards() {
           </CardHeader>
           <CardContent>
             <p className="text-xs text-red-600">
-              Make sure the backend is running on {BACKEND_URL} and that the /metrics and /emails endpoints are available.
+              Make sure the backend is running on {BACKEND_URL}.
             </p>
           </CardContent>
         </Card>
@@ -254,15 +268,11 @@ export default function MetricsCards() {
   const manualReview = metrics.manualReview;
   const avgConfidence = metrics.avgConfidence || 0;
 
-  const autoPercent =
-    emailsToday > 0 ? ((autoSent / emailsToday) * 100).toFixed(0) : "0";
-  const manualPercent =
-    emailsToday > 0 ? ((manualReview / emailsToday) * 100).toFixed(0) : "0";
-
   return (
     <div className="space-y-4">
-      {/* Top Row: 4 Metrics Cards */}
+      {/* Top Stats */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+
         {/* Emails Today */}
         <Card className="border border-blue-100 shadow-sm hover:shadow-md transition-shadow">
           <CardHeader className="pb-3">
@@ -271,16 +281,14 @@ export default function MetricsCards() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-blue-600">
-              {emailsToday}
-            </div>
+            <div className="text-3xl font-bold text-blue-600">{emailsToday}</div>
             <p className="mt-2 text-xs text-muted-foreground">
               Total emails received today
             </p>
           </CardContent>
         </Card>
 
-        {/* Auto-Sent */}
+        {/* Auto-sent */}
         <Card className="border border-blue-100 shadow-sm hover:shadow-md transition-shadow">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -288,11 +296,9 @@ export default function MetricsCards() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-blue-600">
-              {autoSent}
-            </div>
+            <div className="text-3xl font-bold text-blue-600">{autoSent}</div>
             <p className="mt-2 text-xs text-muted-foreground">
-              {autoPercent}% of today&apos;s emails
+              Total emails auto-sent so far
             </p>
           </CardContent>
         </Card>
@@ -305,16 +311,23 @@ export default function MetricsCards() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-blue-600">
-              {manualReview}
-            </div>
+            <div className="text-3xl font-bold text-blue-600">{manualReview}</div>
+
             <p className="mt-2 text-xs text-muted-foreground">
-              {manualPercent}% pending
+              {manualReview === 0 ? (
+                "No emails pending review"
+              ) : (
+                <>
+                  Emails waiting for advisor review.
+                  <br />
+                  Oldest pending: {oldestPendingLabel}
+                </>
+              )}
             </p>
           </CardContent>
         </Card>
 
-        {/* Average Confidence Score */}
+        {/* Average Confidence — UPDATED NAME */}
         <Card
           className={`border shadow-sm hover:shadow-md transition-shadow ${getConfidenceBgColor(
             avgConfidence,
@@ -322,7 +335,7 @@ export default function MetricsCards() {
         >
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Avg Confidence
+              Average Confidence
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -340,7 +353,7 @@ export default function MetricsCards() {
         </Card>
       </div>
 
-      {/* Bottom Row: Pending Responses Chart (REAL data) */}
+      {/* Chart */}
       <Card className="border border-blue-100 shadow-sm">
         <CardHeader className="pb-3 flex flex-row items-center justify-between">
           <CardTitle className="text-base font-semibold">
@@ -351,7 +364,9 @@ export default function MetricsCards() {
               size="sm"
               variant={chartView === "daily" ? "default" : "outline"}
               onClick={() => setChartView("daily")}
-              className={chartView === "daily" ? "bg-blue-600 hover:bg-blue-700" : ""}
+              className={
+                chartView === "daily" ? "bg-blue-600 hover:bg-blue-700" : ""
+              }
             >
               Daily
             </Button>
@@ -359,7 +374,9 @@ export default function MetricsCards() {
               size="sm"
               variant={chartView === "weekly" ? "default" : "outline"}
               onClick={() => setChartView("weekly")}
-              className={chartView === "weekly" ? "bg-blue-600 hover:bg-blue-700" : ""}
+              className={
+                chartView === "weekly" ? "bg-blue-600 hover:bg-blue-700" : ""
+              }
             >
               Weekly
             </Button>
@@ -367,12 +384,15 @@ export default function MetricsCards() {
               size="sm"
               variant={chartView === "monthly" ? "default" : "outline"}
               onClick={() => setChartView("monthly")}
-              className={chartView === "monthly" ? "bg-blue-600 hover:bg-blue-700" : ""}
+              className={
+                chartView === "monthly" ? "bg-blue-600 hover:bg-blue-700" : ""
+              }
             >
               Monthly
             </Button>
           </div>
         </CardHeader>
+
         <CardContent>
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={chartData}>
