@@ -4,16 +4,18 @@ import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import ManualReviewTable from "@/components/manual-review-table";
 import AutoSentTable from "@/components/auto-sent-table";
+import { SAMPLE_EMAILS } from "@/components/sample-emails";
 
-type FilterType = "all" | "review" | "auto" | "today" | "high" | "low";
+type FilterType = "all" | "today" | "high" | "low";
 type EmailStatus = "auto" | "review";
 
 export type Email = {
   id: number;
   student_name?: string | null;
+  uni?: string | null;
   subject: string;
   body: string;
-  confidence: number;
+  confidence: number; // 0–1
   status: EmailStatus;
   suggested_reply: string;
   received_at: string; // ISO timestamp from backend
@@ -27,6 +29,8 @@ type Metrics = {
 };
 
 const BACKEND_URL = "http://127.0.0.1:8000";
+const CONFIDENCE_THRESHOLD_KEY = "confidenceThresholdPct";
+const DEFAULT_CONFIDENCE_THRESHOLD_PCT = 90; // fallback if nothing saved
 
 export default function EmailsTab() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -39,21 +43,49 @@ export default function EmailsTab() {
   const [error, setError] = useState<string | null>(null);
   const [seeding, setSeeding] = useState<boolean>(false);
 
-  // for the detail panel
+  // detail panel
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
   const [replyDraft, setReplyDraft] = useState<string>("");
 
   // metrics from backend
   const [metrics, setMetrics] = useState<Metrics | null>(null);
 
+  // confidence threshold for high vs low (0–1), set from Settings
+  const [confidenceThreshold, setConfidenceThreshold] = useState<number>(
+    DEFAULT_CONFIDENCE_THRESHOLD_PCT / 100,
+  );
+
   const filters: { id: FilterType; label: string; description: string }[] = [
     { id: "all", label: "All", description: "Show all emails" },
-    { id: "review", label: "Needs Review", description: "Pending manual review" },
-    { id: "auto", label: "Approved", description: "Advisor-approved replies" },
-    { id: "today", label: "Sent Today", description: "Sent in last 24 hours" },
-    { id: "high", label: "High Confidence", description: "90%+ confidence" },
-    { id: "low", label: "Low Confidence", description: "Below 80% confidence" },
+    {
+      id: "today",
+      label: "Sent Today",
+      description: "Emails received today",
+    },
+    {
+      id: "high",
+      label: "High Confidence",
+      description: "Emails at or above the advisor's confidence threshold",
+    },
+    {
+      id: "low",
+      label: "Low Confidence",
+      description: "Emails below the advisor's confidence threshold",
+    },
   ];
+
+  // --- Load confidence threshold from localStorage (set in Settings) ---
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const saved = window.localStorage.getItem(CONFIDENCE_THRESHOLD_KEY);
+    if (!saved) return;
+
+    const pct = Number(saved);
+    if (!Number.isNaN(pct) && pct >= 0 && pct <= 100) {
+      setConfidenceThreshold(pct / 100);
+    }
+  }, []);
 
   // --- Fetch emails from backend ---
   async function fetchEmails() {
@@ -94,20 +126,24 @@ export default function EmailsTab() {
       setMetrics(data);
     } catch (err) {
       console.error(err);
-      // don't surface metrics errors in UI for now
+      // metrics failure is non-blocking
     }
   }
 
-  // --- Seed ONE example email into backend ---
+  // --- Seed ONE random example email into backend ---
   async function seedExampleEmails() {
     try {
       setSeeding(true);
       setError(null);
 
+      const random =
+        SAMPLE_EMAILS[Math.floor(Math.random() * SAMPLE_EMAILS.length)];
+
       const sampleEmail = {
-        student_name: "Test Student",
-        subject: "Question about registration deadlines",
-        body: "Hi, I just wanted to check if I can still change my class schedule. Thanks!",
+        student_name: random.student_name,
+        uni: random.uni,
+        subject: random.subject,
+        body: random.body,
         received_at: new Date().toISOString(),
       };
 
@@ -177,33 +213,44 @@ export default function EmailsTab() {
     fetchMetrics();
   }, []);
 
+  // --- Helper: calendar "same day" check for Sent Today ---
+  function isSameDay(a: Date, b: Date) {
+    return (
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate()
+    );
+  }
+
   // --- Helper: apply filter + search to a list of emails ---
   function filterEmails(emails: Email[]): Email[] {
     let filtered = [...emails];
 
+    // Sent Today → filter by calendar day
     if (activeFilter === "today") {
-      const now = new Date();
-      const cutoff = now.getTime() - 24 * 60 * 60 * 1000;
+      const today = new Date();
       filtered = filtered.filter((e) => {
-        const t = new Date(e.received_at).getTime();
-        return t >= cutoff;
+        const t = new Date(e.received_at);
+        return isSameDay(t, today);
       });
     }
 
+    // High / Low confidence using the advisor-set threshold
     if (activeFilter === "high") {
-      filtered = filtered.filter((e) => e.confidence >= 0.9);
+      filtered = filtered.filter((e) => e.confidence >= confidenceThreshold);
     }
     if (activeFilter === "low") {
-      filtered = filtered.filter((e) => e.confidence < 0.8);
+      filtered = filtered.filter((e) => e.confidence < confidenceThreshold);
     }
 
+    // Text search: student name, UNI, subject
     if (searchTerm.trim().length > 0) {
       const q = searchTerm.toLowerCase();
       filtered = filtered.filter((e) => {
         return (
           (e.student_name ?? "").toLowerCase().includes(q) ||
-          e.subject.toLowerCase().includes(q) ||
-          e.body.toLowerCase().includes(q)
+          (e.uni ?? "").toLowerCase().includes(q) ||
+          e.subject.toLowerCase().includes(q)
         );
       });
     }
@@ -232,13 +279,17 @@ export default function EmailsTab() {
     );
   }
 
+  const thresholdPctLabel = Math.round(confidenceThreshold * 100);
+
   return (
     <>
       <div className="space-y-6">
         {/* Header */}
         <div>
           <h2 className="text-2xl font-bold text-foreground">Email Management</h2>
-          <p className="text-muted-foreground mt-1">Review and manage student emails</p>
+          <p className="text-muted-foreground mt-1">
+            Review and manage student emails
+          </p>
         </div>
 
         {/* Metrics strip */}
@@ -273,22 +324,12 @@ export default function EmailsTab() {
             {seeding ? "Creating sample email..." : "Generate sample email"}
           </button>
           <span className="text-xs text-muted-foreground">
-            Click to simulate one student email flowing into the system.
+            Each click adds a new example student email into the system.
           </span>
         </div>
 
-        {/* Search Bar */}
-        <div>
-          <Input
-            placeholder="Search by student name, UNI, or subject..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="max-w-md"
-          />
-        </div>
-
         {/* Quick Filters */}
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 items-center">
           {filters.map((filter) => (
             <button
               key={filter.id}
@@ -303,6 +344,9 @@ export default function EmailsTab() {
               {filter.label}
             </button>
           ))}
+          <span className="text-xs text-muted-foreground">
+            High/Low confidence split at {thresholdPctLabel}% (set in Settings).
+          </span>
         </div>
 
         {/* Tabs */}
@@ -329,23 +373,44 @@ export default function EmailsTab() {
           </button>
         </div>
 
-        {/* Tables */}
+        {/* Tables + per-section search boxes */}
         {activeSection === "review" && (
-          <ManualReviewTable
-            emails={filteredReviewEmails}
-            searchTerm={searchTerm}
-            onApprove={(id) => handleApprove(id)}
-            onDelete={handleDelete}
-            onSelect={handleSelect}
-          />
+          <div className="space-y-4">
+            {/* Search bar for Needs Review */}
+            <Input
+              placeholder="Search by student name, UNI, or subject..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="max-w-md"
+            />
+
+            <ManualReviewTable
+              emails={filteredReviewEmails}
+              searchTerm={searchTerm}
+              onApprove={(id) => handleApprove(id)}
+              onDelete={handleDelete}
+              onSelect={handleSelect}
+            />
+          </div>
         )}
+
         {activeSection === "auto" && (
-          <AutoSentTable
-            emails={filteredAutoEmails}
-            searchTerm={searchTerm}
-            onDelete={handleDelete}
-            onSelect={handleSelect}
-          />
+          <div className="space-y-4">
+            {/* Search bar for Approved */}
+            <Input
+              placeholder="Search by student name, UNI, or subject..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="max-w-md"
+            />
+
+            <AutoSentTable
+              emails={filteredAutoEmails}
+              searchTerm={searchTerm}
+              onDelete={handleDelete}
+              onSelect={handleSelect}
+            />
+          </div>
         )}
       </div>
 
@@ -362,7 +427,8 @@ export default function EmailsTab() {
                   From: {selectedEmail.student_name ?? "Unknown student"}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Received: {new Date(selectedEmail.received_at).toLocaleString()}
+                  Received:{" "}
+                  {new Date(selectedEmail.received_at).toLocaleString()}
                 </p>
               </div>
               <button

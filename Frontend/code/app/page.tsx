@@ -1,17 +1,15 @@
-"use client"
-import AdvisorTester from "@/components/advisor-tester";
-import { useState } from "react"
-import SidebarNav from "@/components/sidebar-nav"
-import HeaderTop from "@/components/header-top"
-import MetricsCards from "@/components/metrics-cards"
-import ManualReviewTable from "@/components/manual-review-table"
-import AutoSentTable from "@/components/auto-sent-table"
-import EmailsTab from "@/components/emails-tab"
-import AnalyticsTab from "@/components/analytics-tab"
-import SettingsTab from "@/components/settings-tab"
+"use client";
+
+import { useState } from "react";
+import SidebarNav from "@/components/sidebar-nav";
+import HeaderTop from "@/components/header-top";
+import MetricsCards from "@/components/metrics-cards";
+import EmailsTab from "@/components/emails-tab";
+import AnalyticsTab from "@/components/analytics-tab";
+import SettingsTab from "@/components/settings-tab";
 
 export default function Page() {
-  const [activeTab, setActiveTab] = useState("dashboard")
+  const [activeTab, setActiveTab] = useState("dashboard");
 
   return (
     <div className="flex h-screen bg-background">
@@ -30,13 +28,14 @@ export default function Page() {
             <div className="space-y-8">
               <div>
                 <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
-                <p className="mt-2 text-muted-foreground">Monitor and manage student email interactions</p>
+                <p className="mt-2 text-muted-foreground">
+                  High-level overview of student email volume and advisor workload.
+                </p>
               </div>
               <MetricsCards />
-              <div className="space-y-8">
-                <ManualReviewTable />
-                <AutoSentTable />
-              </div>
+              <p className="text-xs text-muted-foreground">
+                For detailed email review and approvals, use the Emails tab.
+              </p>
             </div>
           )}
 
@@ -51,5 +50,5 @@ export default function Page() {
         </main>
       </div>
     </div>
-  )
+  );
 }

@@ -17,7 +17,11 @@ export default function ManualReviewTable({
   onSelect,
 }: ManualReviewTableProps) {
   if (emails.length === 0) {
-    return <div className="text-sm text-muted-foreground">No emails needing review.</div>;
+    return (
+      <div className="text-sm text-muted-foreground">
+        No emails needing review.
+      </div>
+    );
   }
 
   return (
@@ -34,8 +38,13 @@ export default function ManualReviewTable({
         </thead>
         <tbody>
           {emails.map((email) => (
-            <tr key={email.id} className="border-t border-border hover:bg-muted/40">
-              <td className="px-4 py-2">{email.student_name ?? "Unknown"}</td>
+            <tr
+              key={email.id}
+              className="border-t border-border hover:bg-muted/40"
+            >
+              <td className="px-4 py-2">
+                {email.student_name ?? "Unknown"}
+              </td>
               <td className="px-4 py-2">{email.subject}</td>
               <td className="px-4 py-2">
                 {(email.confidence * 100).toFixed(0)}%
