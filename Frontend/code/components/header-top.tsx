@@ -1,17 +1,73 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { format } from "date-fns"
 import { User } from "lucide-react"
 
+type AdvisorProfile = {
+  name: string
+  email: string
+  department: string
+}
+
+const PROFILE_KEY = "advisorProfile"
+
 export default function HeaderTop() {
+  const [profile, setProfile] = useState<AdvisorProfile>({
+    name: "Dr. Sarah Smith",
+    email: "sarah.smith@university.edu",
+    department: "Academic Advising Center",
+  })
+
   const lastUpdated = new Date()
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+
+    // Initial load from localStorage
+    const stored = window.localStorage.getItem(PROFILE_KEY)
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored) as Partial<AdvisorProfile>
+        setProfile(prev => ({
+          name: parsed.name ?? prev.name,
+          email: parsed.email ?? prev.email,
+          department: parsed.department ?? prev.department,
+        }))
+      } catch {
+        // ignore parse errors
+      }
+    }
+
+    // Listen for live updates from SettingsTab
+    function handleProfileUpdated(event: Event) {
+      const custom = event as CustomEvent<AdvisorProfile>
+      if (custom.detail) {
+        setProfile(custom.detail)
+      }
+    }
+
+    window.addEventListener(
+      "advisor-profile-updated",
+      handleProfileUpdated as EventListener,
+    )
+
+    return () => {
+      window.removeEventListener(
+        "advisor-profile-updated",
+        handleProfileUpdated as EventListener,
+      )
+    }
+  }, [])
 
   return (
     <header className="bg-white border-b border-border shadow-sm sticky top-0 z-40">
       <div className="px-8 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <p className="text-sm text-muted-foreground">Last updated:</p>
-          <p className="text-sm font-medium text-foreground">{format(lastUpdated, "MMM d, yyyy • h:mm a")}</p>
+          <p className="text-sm font-medium text-foreground">
+            {format(lastUpdated, "MMM d, yyyy • h:mm a")}
+          </p>
         </div>
 
         {/* Profile Icon */}
@@ -21,8 +77,12 @@ export default function HeaderTop() {
               <User className="h-5 w-5 text-blue-600" />
             </div>
             <div className="hidden sm:block">
-              <p className="text-sm font-medium text-foreground">Dr. Smith</p>
-              <p className="text-xs text-muted-foreground">Academic Advisor</p>
+              <p className="text-sm font-medium text-foreground">
+                {profile.name}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {profile.department}
+              </p>
             </div>
           </div>
         </div>

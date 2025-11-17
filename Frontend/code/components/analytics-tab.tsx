@@ -215,7 +215,7 @@ export default function AnalyticsTab() {
           </CardContent>
         </Card>
 
-        {/* Review Confidence Breakdown (not fake reasons anymore) */}
+        {/* Review Confidence Breakdown */}
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Review Confidence Breakdown</CardTitle>
@@ -231,9 +231,6 @@ export default function AnalyticsTab() {
                   cx="50%"
                   cy="50%"
                   labelLine={false}
-                  label={({ name, value }) =>
-                    reviewTotal > 0 ? `${name}: ${value}` : "No review emails"
-                  }
                   outerRadius={100}
                   dataKey="value"
                 >

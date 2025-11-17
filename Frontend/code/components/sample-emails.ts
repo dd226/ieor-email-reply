@@ -380,4 +380,379 @@ export const SAMPLE_EMAILS: SampleEmail[] = [
     subject: "Disbursement dates for financial aid",
     body: "Hello, can you explain when my financial aid will actually disburse and where I can see the disbursement dates?",
   },
+
+  // 51 – registration_deadline
+  {
+    student_name: "Nora Feldman",
+    uni: "nf2431",
+    subject: "When does registration officially close?",
+    body: "Hi, I don’t want to miss the deadline—when does registration officially close for this term, and is the cut-off time at midnight?",
+  },
+  // 52 – registration_deadline
+  {
+    student_name: "Leo Martinez",
+    uni: "lm2214",
+    subject: "Deadline to change my schedule",
+    body: "Hello, what’s the last day I can adjust my schedule in the portal without submitting extra paperwork?",
+  },
+
+  // 53 – appointment_scheduling
+  {
+    student_name: "Samantha Brooks",
+    uni: "sb2902",
+    subject: "How do I book an advising session?",
+    body: "Hi, I need to meet with an advisor about my academic plan. Where do I go to book a session and how far in advance should I schedule?",
+  },
+  // 54 – appointment_scheduling
+  {
+    student_name: "Owen Li",
+    uni: "ol2840",
+    subject: "No open advising times",
+    body: "Hello, I checked the Navigate app and there are no open advising times for the next two weeks. What should I do if none of the slots work for me?",
+  },
+
+  // 55 – course_withdrawal
+  {
+    student_name: "Jasmine Patel",
+    uni: "jp2731",
+    subject: "Withdrawing after the deadline",
+    body: "Hi, I need to withdraw from a course but the deadline on the calendar has passed. Is there a late withdrawal process I can follow?",
+  },
+  // 56 – course_withdrawal
+  {
+    student_name: "Evan Rogers",
+    uni: "er2870",
+    subject: "Will a W affect my record?",
+    body: "Hello, if I withdraw from a class and get a W, how will that appear on my transcript and could it affect graduate school applications?",
+  },
+
+  // 57 – change_major
+  {
+    student_name: "Lily Anderson",
+    uni: "la2315",
+    subject: "Switching from another major into IEOR",
+    body: "Hi, I’m currently declared in a different engineering major but want to switch into IEOR. Who do I need to talk to and which form should I fill out?",
+  },
+  // 58 – change_major
+  {
+    student_name: "Carlos Ruiz",
+    uni: "cr2961",
+    subject: "Changing my major before junior year",
+    body: "Hello, I’m thinking of changing my major before junior year. Are there any deadlines or GPA requirements I should know about?",
+  },
+
+  // 59 – change_minor
+  {
+    student_name: "Mia Johnson",
+    uni: "mj2158",
+    subject: "Adding a new minor mid-semester",
+    body: "Hi, is it possible to add a new minor in the middle of the semester, and if so, where do I submit the declaration form?",
+  },
+  // 60 – change_minor
+  {
+    student_name: "Arjun Mehta",
+    uni: "am2774",
+    subject: "Switching from one minor to another",
+    body: "Hello, I’m currently declared in one minor but I’d like to switch to a different one. What’s the process to change my minor officially?",
+  },
+
+  // 61 – major_requirements
+  {
+    student_name: "Yara Suleiman",
+    uni: "ys2820",
+    subject: "Clarifying IEOR core vs electives",
+    body: "Hi, I’m confused about which classes count toward the IEOR core and which count as technical electives. Is there a page that breaks this down?",
+  },
+  // 62 – major_requirements
+  {
+    student_name: "Patrick O’Neill",
+    uni: "po2603",
+    subject: "Using a course toward IEOR major",
+    body: "Hello, I’m taking an economics course that seems related to IEOR. How can I check whether it can be applied to my major requirements instead of just as a free elective?",
+  },
+
+  // 63 – minor_requirements
+  {
+    student_name: "Isabel Flores",
+    uni: "if2498",
+    subject: "Finding official minor requirements",
+    body: "Hi, I declared a minor last term but I can’t find the official list of requirements. Where should I look to make sure I’m taking the right courses?",
+  },
+  // 64 – minor_requirements
+  {
+    student_name: "Ryan Kim",
+    uni: "rk2920",
+    subject: "Can my minor classes double count?",
+    body: "Hello, I want to know if some of my minor classes can double count with my major or if they have to be completely separate.",
+  },
+
+  // 65 – requirements_changed
+  {
+    student_name: "Fatima Ali",
+    uni: "fa2719",
+    subject: "Old vs new major requirements",
+    body: "Hi, I started my major under a previous set of requirements. Am I allowed to keep using the old requirements or do I have to follow the updated ones?",
+  },
+  // 66 – requirements_changed
+  {
+    student_name: "George Brown",
+    uni: "gb2433",
+    subject: "Requirement changes for my minor",
+    body: "Hello, I saw that the requirements for my minor were updated this year. How do I know which catalog year I’m following?",
+  },
+
+  // 67 – substitute_databases_datastructures
+  {
+    student_name: "Emily Wong",
+    uni: "ew2309",
+    subject: "Using COMS courses for IEOR CS core",
+    body: "Hi, if I complete COMS W3134 and COMS W4111, can those substitute for the IEOR CS core requirements, or do I still need IEOR E2000?",
+  },
+  // 68 – substitute_databases_datastructures
+  {
+    student_name: "Ahmed Hassan",
+    uni: "ah2867",
+    subject: "Old CS core vs new IEOR core",
+    body: "Hello, I saw older IEOR curriculum pages that mention Java, Data Structures, and Databases. Can I follow that older CS path instead of the current ENGI E1006 plus IEOR E2000 sequence?",
+  },
+
+  // 69 – elective_requirements
+  {
+    student_name: "Natalie Green",
+    uni: "ng2584",
+    subject: "Choosing between two technical electives",
+    body: "Hi, I’m trying to decide between two upper-level courses. Both seem relevant, but I’m not sure if they count as technical electives for my major. How can I confirm?",
+  },
+  // 70 – elective_requirements
+  {
+    student_name: "Dylan Ross",
+    uni: "dr2411",
+    subject: "Management vs technical elective labeling",
+    body: "Hello, one course I’m interested in looks half technical and half business. How do I know whether it will count as a management elective or a technical elective?",
+  },
+
+  // 71 – petition_electives
+  {
+    student_name: "Jade Park",
+    uni: "jp2917",
+    subject: "Petitioning a course outside the approved list",
+    body: "Hi, I found a course in another department that fits my interests but it’s not on the approved elective list. Is there a way to petition for it to count?",
+  },
+  // 72 – petition_electives
+  {
+    student_name: "Hugo Rivera",
+    uni: "hr2540",
+    subject: "Course approval request for technical elective",
+    body: "Hello, I’d like to get a specific course approved as a technical elective because it aligns closely with IEOR topics. What form do I need to submit?",
+  },
+
+  // 73 – double_counting_courses
+  {
+    student_name: "Olivia Brown",
+    uni: "ob2772",
+    subject: "Double counting core and elective",
+    body: "Hi, is it possible for one class to count both toward an engineering non-technical requirement and as an IEOR management elective?",
+  },
+  // 74 – double_counting_courses
+  {
+    student_name: "Samuel Carter",
+    uni: "sc2634",
+    subject: "Using one course for major and pathway",
+    body: "Hello, can the same course count toward both my IEOR major requirements and a special program or pathway requirement?",
+  },
+
+  // 75 – graduation_application
+  {
+    student_name: "Rachel Lee",
+    uni: "rl2505",
+    subject: "Steps to confirm I can graduate",
+    body: "Hi, I’m planning to graduate next spring. What steps do I need to take to confirm I’ve met all of my requirements before submitting the degree application?",
+  },
+  // 76 – graduation_application
+  {
+    student_name: "Tom Baker",
+    uni: "tb2388",
+    subject: "Program plan and graduation form order",
+    body: "Hello, should I get my program plan signed before I submit the graduation application, or can those happen at the same time?",
+  },
+
+  // 77 – ms_express
+  {
+    student_name: "Priyanka Shah",
+    uni: "ps2944",
+    subject: "Timeline for MS Express application",
+    body: "Hi, I’m interested in MS Express but I’m not sure when I should apply. Is there a recommended term or deadline for IEOR students?",
+  },
+  // 78 – ms_express
+  {
+    student_name: "Jacob Stein",
+    uni: "js2109",
+    subject: "References for MS Express",
+    body: "Hello, for MS Express, do I need formal letters of recommendation, or just contact information for references?",
+  },
+
+  // 79 – advanced_track
+  {
+    student_name: "Helen Zhou",
+    uni: "hz2250",
+    subject: "Eligibility for IEOR advanced track",
+    body: "Hi, I’m considering the Undergraduate Advanced Track. Is there a minimum GPA and when in my degree should I apply?",
+  },
+  // 80 – advanced_track
+  {
+    student_name: "Noah Green",
+    uni: "ng2320",
+    subject: "Required courses for advanced track",
+    body: "Hello, which specific courses are required for the advanced track and where can I see the full list of advanced electives?",
+  },
+
+  // 81 – major_declaration
+  {
+    student_name: "Julia Park",
+    uni: "jp2440",
+    subject: "Timeline for declaring IEOR major",
+    body: "Hi, I’m a sophomore in SEAS. When exactly does major declaration open and close, and how do I indicate that I want an IEOR major?",
+  },
+  // 82 – major_declaration
+  {
+    student_name: "Michael Stone",
+    uni: "ms2873",
+    subject: "Comparing IEOR vs OR:FE",
+    body: "Hello, I’m trying to choose between IEOR and Operations Research: Financial Engineering. Is there a resource that compares the requirements and career paths?",
+  },
+
+  // 83 – research_opportunities
+  {
+    student_name: "Laura Kim",
+    uni: "lk2931",
+    subject: "Finding IEOR research projects",
+    body: "Hi, I’d like to join a research project in IEOR. Is there a list of ongoing projects or should I email faculty directly?",
+  },
+  // 84 – research_opportunities
+  {
+    student_name: "Adrian Torres",
+    uni: "at2804",
+    subject: "Registering for research credits",
+    body: "Hello, if I work with a professor on research, how do I register to receive academic credit and which course number should I use?",
+  },
+
+  // 85 – study_abroad
+  {
+    student_name: "Sofia Rossi",
+    uni: "sr2556",
+    subject: "Studying abroad as an IEOR junior",
+    body: "Hi, I’m an IEOR student and I want to study abroad junior year. Is spring of sophomore year the only recommended time, or are there other options?",
+  },
+  // 86 – study_abroad
+  {
+    student_name: "Jason Wu",
+    uni: "jw2601",
+    subject: "Counting study abroad classes toward IEOR",
+    body: "Hello, if I take math or statistics classes abroad, can those count toward my IEOR requirements, or will they just transfer as general credit?",
+  },
+
+  // 87 – struggling_in_classes
+  {
+    student_name: "Nina Alvarez",
+    uni: "na2742",
+    subject: "Worried about grades this term",
+    body: "Hi, my grades this term are lower than usual and I’m worried about my GPA. Can I meet with someone to talk through options like tutoring or dropping a class?",
+  },
+  // 88 – struggling_in_classes
+  {
+    student_name: "Kevin Hill",
+    uni: "kh2126",
+    subject: "Balancing coursework and health",
+    body: "Hello, I’m having trouble keeping up with coursework due to personal and health issues. Are there campus resources you recommend, and can I talk with an advisor about my situation?",
+  },
+
+  // 89 – barnard_four_plus_one
+  {
+    student_name: "Chloe Bernstein",
+    uni: "cb2981",
+    subject: "Barnard 4+1 prerequisites",
+    body: "Hi, I’m a Barnard student interested in the IEOR 4+1 pathway. Which prerequisites should I complete by junior year to be a strong applicant?",
+  },
+  // 90 – barnard_four_plus_one
+  {
+    student_name: "Rachel Cohen",
+    uni: "rc2833",
+    subject: "GPA expectations for Barnard 4+1",
+    body: "Hello, is there a minimum GPA for the Barnard 4+1 program in IEOR, and how competitive is the application process?",
+  },
+
+  // 91 – three_plus_two_program
+  {
+    student_name: "Elias Morgan",
+    uni: "em2908",
+    subject: "3+2 program application process",
+    body: "Hi, I’m at a partner liberal arts college and considering the 3+2 program with Columbia Engineering. Where can I find information about how to apply and how credits will transfer?",
+  },
+  // 92 – three_plus_two_program
+  {
+    student_name: "Sophie Daniels",
+    uni: "sd2462",
+    subject: "Requirements for 3+2 admission",
+    body: "Hello, what GPA and prerequisite courses are typically required for students applying to the 3+2 program in IEOR?",
+  },
+
+  // 93 – registrar_transcript_portal
+  {
+    student_name: "Brian Lee",
+    uni: "bl2175",
+    subject: "Sending transcript to an external program",
+    body: "Hi, I need to send an official transcript to a summer program. Do I do that through the transcript portal, and how long does it usually take to process?",
+  },
+  // 94 – registrar_transcript_portal
+  {
+    student_name: "Emma Watson",
+    uni: "ew2995",
+    subject: "Accessing unofficial academic record",
+    body: "Hello, I just need an unofficial record of my classes and grades. Where in the student system can I download that quickly?",
+  },
+
+  // 95 – financial_aid_overview
+  {
+    student_name: "Luis Garcia",
+    uni: "lg2329",
+    subject: "Questions about financial aid checklist",
+    body: "Hi, my financial aid checklist shows a few outstanding items but I’m not sure what they mean. Where can I see detailed explanations and who should I contact for help?",
+  },
+  // 96 – financial_aid_overview
+  {
+    student_name: "Hannah Smith",
+    uni: "hs2863",
+    subject: "When will my aid disburse?",
+    body: "Hello, I’m trying to plan my budget for the start of the term. On which date does financial aid typically disburse to my account each semester?",
+  },
+
+  // 97 – registration_deadline
+  {
+    student_name: "Connor James",
+    uni: "cj2954",
+    subject: "Late registration and penalties",
+    body: "Hi, if I miss the main registration deadline, is there a late registration period and are there any fees or penalties associated with that?",
+  },
+  // 98 – appointment_scheduling
+  {
+    student_name: "Alicia Ramos",
+    uni: "ar2187",
+    subject: "Rescheduling my advising appointment",
+    body: "Hello, I booked an advising appointment but now have a conflict. How do I reschedule it, and is there a penalty if I cancel same day?",
+  },
+
+  // 99 – elective_requirements
+  {
+    student_name: "Peter Zhang",
+    uni: "pz2212",
+    subject: "Total elective credits needed",
+    body: "Hi, I’m planning out my last three semesters and want to check how many technical and management elective credits I still need to graduate in IEOR.",
+  },
+  // 100 – graduation_application
+  {
+    student_name: "Lena Novak",
+    uni: "ln2940",
+    subject: "Confirming graduation term",
+    body: "Hello, I’m deciding whether to graduate in fall or spring. Is it okay to submit a degree application now and change my graduation term later if needed?",
+  },
 ];
