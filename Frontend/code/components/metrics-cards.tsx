@@ -207,16 +207,36 @@ export default function MetricsCards() {
   const oldestPendingLabel = (() => {
     if (reviewEmails.length === 0) return "No emails pending review";
 
-    const now = new Date();
-    const oldest = reviewEmails.reduce((min, e) => {
-      const t = new Date(e.received_at);
-      return t < min ? t : min;
-    }, new Date(reviewEmails[0].received_at));
+    // Helper: treat timestamps as UTC if they don't have explicit timezone info,
+    // same as in ManualReviewTable.
+    const parseReceivedAt = (received_at: string): Date | null => {
+      if (!received_at) return null;
 
-    const diffMs = now.getTime() - oldest.getTime();
+      const iso =
+        received_at.endsWith("Z") || received_at.includes("+")
+          ? received_at
+          : received_at + "Z";
+
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return null;
+      return d;
+    };
+
+    const dates = reviewEmails
+      .map((e) => parseReceivedAt(e.received_at))
+      .filter((d): d is Date => d !== null);
+
+    if (dates.length === 0) return "Unknown";
+
+    const now = new Date();
+    const oldest = dates.reduce((min, d) => (d < min ? d : min), dates[0]);
+
+    let diffMs = now.getTime() - oldest.getTime();
+    if (diffMs < 0) diffMs = 0; // guard against any future timestamps
+
     const diffMinutes = Math.floor(diffMs / 60000);
 
-    if (diffMinutes < 1) return "Just now";
+    if (diffMinutes < 1) return "< 1 min ago";
     if (diffMinutes < 60) return `${diffMinutes} min ago`;
 
     const diffHours = Math.floor(diffMinutes / 60);
@@ -336,7 +356,7 @@ export default function MetricsCards() {
           </CardContent>
         </Card>
 
-        {/* Average Confidence — UPDATED NAME */}
+        {/* Average Confidence */}
         <Card
           className={`border shadow-sm hover:shadow-md transition-shadow ${getConfidenceBgColor(
             avgConfidence,

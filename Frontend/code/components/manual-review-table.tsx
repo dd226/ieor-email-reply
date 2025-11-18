@@ -64,20 +64,23 @@ export default function ManualReviewTable({
               <td className="px-4 py-2">
                 {email.student_name ?? "Unknown"}
               </td>
-              <td className="px-4 py-2 text-muted-foreground text-xs w-[80px] whitespace-nowrap">
+
+              {/* UNI — now same size & color as Student */}
+              <td className="px-4 py-2 w-[80px] whitespace-nowrap">
                 {email.uni ?? "—"}
               </td>
+
               <td className="px-4 py-2">{email.subject}</td>
               <td className="px-4 py-2">
                 <span
                   className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
                     email.confidence < 0.6
-                      ? "bg-red-100 text-red-800" :
-                    email.confidence < 0.8
-                      ? "bg-yellow-100 text-yellow-800" :
-                    email.confidence < 0.95
-                      ? "bg-green-100 text-green-800" :
-                      "bg-green-200 text-green-900"
+                      ? "bg-red-100 text-red-800"
+                      : email.confidence < 0.8
+                      ? "bg-yellow-100 text-yellow-800"
+                      : email.confidence < 0.95
+                      ? "bg-green-100 text-green-800"
+                      : "bg-green-200 text-green-900"
                   }`}
                 >
                   {(email.confidence * 100).toFixed(0)}%
