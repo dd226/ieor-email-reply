@@ -81,6 +81,7 @@ class EmailIn(BaseModel):
     This is what your ingestion script or frontend button sends.
     """
     student_name: Optional[str] = None
+    uni: Optional[str] = None
     subject: str
     body: str
     received_at: Optional[datetime] = None
@@ -92,6 +93,7 @@ class Email(BaseModel):
     """
     id: int
     student_name: Optional[str] = None
+    uni: Optional[str] = None
     subject: str
     body: str
     confidence: float
@@ -117,6 +119,7 @@ class EmailORM(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     student_name = Column(String, nullable=True)
+    uni = Column(String, nullable=True)
     subject = Column(String, nullable=False)
     body = Column(Text, nullable=False)
     confidence = Column(Float, nullable=False)
@@ -143,6 +146,7 @@ def orm_to_schema(email: EmailORM) -> Email:
     return Email(
         id=email.id,
         student_name=email.student_name,
+        uni=email.uni,
         subject=email.subject,
         body=email.body,
         confidence=email.confidence,
@@ -187,6 +191,7 @@ def ingest_email(email_in: EmailIn):
     try:
         email_obj = EmailORM(
             student_name=email_in.student_name,
+            uni=email_in.uni,
             subject=email_in.subject,
             body=email_in.body,
             confidence=confidence,

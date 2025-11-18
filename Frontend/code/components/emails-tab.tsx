@@ -419,12 +419,20 @@ export default function EmailsTab() {
         <div className="fixed inset-0 bg-black/40 flex justify-end z-50">
           <div className="w-full max-w-xl bg-background h-full shadow-xl p-6 overflow-y-auto">
             <div className="flex items-start justify-between mb-4">
-              <div>
+              <div className="space-y-1">
                 <h3 className="text-lg font-semibold">
                   {selectedEmail.subject}
                 </h3>
                 <p className="text-sm text-muted-foreground">
                   From: {selectedEmail.student_name ?? "Unknown student"}
+                  {selectedEmail.uni && (
+                    <>
+                      {" · UNI: "}
+                      {selectedEmail.uni}
+                      {" · "}
+                      {`${selectedEmail.uni}@columbia.edu`}
+                    </>
+                  )}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Received:{" "}
@@ -434,6 +442,7 @@ export default function EmailsTab() {
               <button
                 onClick={closeDetail}
                 className="text-sm text-muted-foreground hover:text-foreground"
+                aria-label="Close details"
               >
                 ✕
               </button>
