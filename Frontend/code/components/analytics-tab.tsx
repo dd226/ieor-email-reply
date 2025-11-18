@@ -17,6 +17,10 @@ import {
 
 const BACKEND_URL = "http://127.0.0.1:8000";
 
+// must match SettingsTab
+const CONFIDENCE_THRESHOLD_KEY = "confidenceThresholdPct";
+const DEFAULT_CONFIDENCE_THRESHOLD_PCT = 92;
+
 type EmailStatus = "auto" | "review";
 
 type Email = {
@@ -38,7 +42,8 @@ type ConfidenceBucket = {
 
 type ReviewBucket = {
   name: string;
-  value: number;
+  value: number; // count of emails in this bucket
+  percentage: number; // % of review emails in this bucket
   color: string;
 };
 
@@ -46,6 +51,11 @@ export default function AnalyticsTab() {
   const [emails, setEmails] = useState<Email[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  // threshold in PERCENT (50–100), same as SettingsTab slider
+  const [thresholdPct, setThresholdPct] = useState<number>(
+    DEFAULT_CONFIDENCE_THRESHOLD_PCT,
+  );
 
   // --- Fetch all emails from backend ---
   useEffect(() => {
@@ -68,6 +78,18 @@ export default function AnalyticsTab() {
     }
 
     fetchEmails();
+  }, []);
+
+  // --- Load advisor threshold from the same localStorage key as SettingsTab ---
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem(CONFIDENCE_THRESHOLD_KEY);
+    if (stored) {
+      const value = Number(stored);
+      if (!Number.isNaN(value)) {
+        setThresholdPct(value);
+      }
+    }
   }, []);
 
   const total = emails.length;
@@ -101,38 +123,58 @@ export default function AnalyticsTab() {
     };
   });
 
+  // gradient-style colors for confidence buckets
+  const getBucketColor = (range: string) => {
+    if (range.startsWith("0")) {
+      // 0–60%
+      return "#fca5a5"; // soft red
+    }
+    if (range.startsWith("60")) {
+      // 60–80%
+      return "#fde68a"; // soft yellow
+    }
+    if (range.startsWith("80")) {
+      // 80–95%
+      return "#4ade80"; // light green
+    }
+    // 95–100%
+    return "#22c55e"; // richer green
+  };
+
   // --- Review breakdown (REAL: review emails by confidence bucket) ---
   const reviewEmails = emails.filter((e) => e.status === "review");
   const reviewTotal = reviewEmails.length;
 
-  const reviewLow = reviewEmails.filter((e) => e.confidence < 0.6).length;
-  const reviewMedium = reviewEmails.filter(
-    (e) => e.confidence >= 0.6 && e.confidence < 0.8,
-  ).length;
-  const reviewHigh = reviewEmails.filter(
-    (e) => e.confidence >= 0.8,
-  ).length;
+  const reviewBucketCounts = new Array(bucketDefs.length).fill(0);
+  for (const e of reviewEmails) {
+    const c = e.confidence ?? 0;
+    let idx = 0;
+    if (c < 0.6) idx = 0;
+    else if (c < 0.8) idx = 1;
+    else if (c < 0.95) idx = 2;
+    else idx = 3;
+    reviewBucketCounts[idx] += 1;
+  }
 
-  const reviewReasons: ReviewBucket[] = [
-    {
-      name: "Low confidence (<60%)",
-      value: reviewLow,
-      color: "#ef4444",
-    },
-    {
-      name: "Medium confidence (60–80%)",
-      value: reviewMedium,
-      color: "#f59e0b",
-    },
-    {
-      name: "High confidence (≥80%)",
-      value: reviewHigh,
-      color: "#3b82f6",
-    },
-  ];
+  const reviewReasons: ReviewBucket[] = bucketDefs.map((b, i) => {
+    const count = reviewBucketCounts[i];
+    const percentage =
+      reviewTotal > 0 ? Math.round((count / reviewTotal) * 100) : 0;
+    return {
+      name: b.label,
+      value: count,
+      percentage,
+      color: getBucketColor(b.label),
+    };
+  });
 
-  // --- Key insight numbers (REAL) ---
-  const lowConfAll = emails.filter((e) => e.confidence < 0.8).length;
+  // --- Key insight numbers (use threshold from Settings) ---
+  const effectiveThreshold = thresholdPct / 100; // convert 92 -> 0.92
+  const thresholdPercent = thresholdPct;
+
+  const lowConfAll = emails.filter(
+    (e) => (e.confidence ?? 0) < effectiveThreshold,
+  ).length;
   const lowConfPercent = total > 0 ? Math.round((lowConfAll / total) * 100) : 0;
 
   const pendingCount = reviewTotal;
@@ -142,7 +184,7 @@ export default function AnalyticsTab() {
     return (
       <div className="space-y-6">
         <h2 className="text-2xl font-bold text-foreground">Analytics</h2>
-        <p className="text-muted-foreground mt-1">Loading analytics…</p>
+        <p className="mt-1 text-muted-foreground">Loading analytics…</p>
       </div>
     );
   }
@@ -151,7 +193,7 @@ export default function AnalyticsTab() {
     return (
       <div className="space-y-6">
         <h2 className="text-2xl font-bold text-foreground">Analytics</h2>
-        <p className="text-red-600 mt-1">{error}</p>
+        <p className="mt-1 text-red-600">{error}</p>
       </div>
     );
   }
@@ -160,7 +202,7 @@ export default function AnalyticsTab() {
     return (
       <div className="space-y-6">
         <h2 className="text-2xl font-bold text-foreground">Analytics</h2>
-        <p className="text-muted-foreground mt-1">
+        <p className="mt-1 text-muted-foreground">
           No emails yet — analytics will appear once emails start flowing into the system.
         </p>
       </div>
@@ -172,46 +214,48 @@ export default function AnalyticsTab() {
       {/* Header */}
       <div>
         <h2 className="text-2xl font-bold text-foreground">Analytics</h2>
-        <p className="text-muted-foreground mt-1">
+        <p className="mt-1 text-muted-foreground">
           Email processing insights and trends (based on real data)
         </p>
       </div>
 
       {/* Charts Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Confidence Distribution */}
-        <Card>
+        <Card className="h-full">
           <CardHeader>
             <CardTitle className="text-lg">Confidence Distribution</CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="mt-1 text-xs text-muted-foreground">
               How many emails fall into each confidence bracket
             </p>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
+            <ResponsiveContainer width="100%" height={360}>
               <BarChart data={confidenceDistribution}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
                 <XAxis dataKey="range" stroke="#6b7280" />
                 <YAxis stroke="#6b7280" />
                 <Tooltip
-                  contentStyle={{ backgroundColor: "#f3f4f6", border: "1px solid #d1d5db" }}
+                  contentStyle={{
+                    backgroundColor: "#f3f4f6",
+                    border: "1px solid #d1d5db",
+                  }}
                   formatter={(value, name) =>
-                    name === "count" ? [`${value} emails`, "Count"] : [value, name]
+                    name === "count"
+                      ? [`${value} emails`, "Count"]
+                      : [value, name]
                   }
                 />
-                <Bar dataKey="count" fill="#3b82f6" radius={[8, 8, 0, 0]} />
+                <Bar dataKey="count" radius={[8, 8, 0, 0]}>
+                  {confidenceDistribution.map((item) => (
+                    <Cell
+                      key={item.range}
+                      fill={getBucketColor(item.range)}
+                    />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
-            <div className="mt-6 grid grid-cols-2 gap-4">
-              {confidenceDistribution.map((item) => (
-                <div key={item.range} className="text-sm">
-                  <p className="text-muted-foreground">{item.range}</p>
-                  <p className="font-semibold text-foreground">
-                    {item.count} ({item.percentage}%)
-                  </p>
-                </div>
-              ))}
-            </div>
           </CardContent>
         </Card>
 
@@ -219,7 +263,7 @@ export default function AnalyticsTab() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Review Confidence Breakdown</CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="mt-1 text-xs text-muted-foreground">
               How confidence scores are distributed among emails that still need manual review
             </p>
           </CardHeader>
@@ -239,8 +283,8 @@ export default function AnalyticsTab() {
                   ))}
                 </Pie>
                 <Tooltip
-                  formatter={(value) =>
-                    `${value as number} review email${(value as number) === 1 ? "" : "s"}`
+                  formatter={(_value, _name, info) =>
+                    `${info?.payload?.percentage ?? 0}%`
                   }
                 />
               </PieChart>
@@ -254,7 +298,7 @@ export default function AnalyticsTab() {
                   />
                   <span className="text-sm text-foreground">{item.name}</span>
                   <span className="ml-auto text-sm font-semibold text-muted-foreground">
-                    {item.value}
+                    {item.percentage}%
                   </span>
                 </div>
               ))}
@@ -264,7 +308,7 @@ export default function AnalyticsTab() {
       </div>
 
       {/* Insights */}
-      <Card className="bg-blue-50 border-blue-200">
+      <Card className="border-blue-200 bg-blue-50">
         <CardHeader>
           <CardTitle className="text-lg text-blue-900">Key Insights</CardTitle>
         </CardHeader>
@@ -274,8 +318,9 @@ export default function AnalyticsTab() {
               {lowConfPercent}%
             </div>
             <p className="text-sm text-blue-800">
-              of all emails have confidence below 80%. You may want to adjust thresholds
-              or expand the knowledge base for these queries.
+              of all emails have confidence below {thresholdPercent}%.
+              You may want to adjust thresholds or expand the knowledge base
+              for these queries.
             </p>
           </div>
           <div className="flex gap-4">

@@ -348,7 +348,7 @@ export default function SettingsTab() {
   }
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6">
       {/* Header */}
       <div>
         <h2 className="text-2xl font-bold text-foreground">Settings</h2>
@@ -357,271 +357,274 @@ export default function SettingsTab() {
         </p>
       </div>
 
-      {/* Auto-Send Threshold */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Auto-Send Threshold</CardTitle>
-          <CardDescription>
-            Emails with confidence above this level will be treated as high
-            confidence.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <label className="text-sm font-medium text-foreground">
-                Confidence Threshold
-              </label>
-              <span className="text-2xl font-bold text-blue-600">
-                {thresholdPct}%
-              </span>
+      {/* Main settings grid: 2x2 on md+ */}
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* Auto-Send Threshold */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Auto-Send Threshold</CardTitle>
+            <CardDescription>
+              Emails with confidence above this level will be treated as high
+              confidence.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <label className="text-sm font-medium text-foreground">
+                  Confidence Threshold
+                </label>
+                <span className="text-2xl font-bold text-blue-600">
+                  {thresholdPct}%
+                </span>
+              </div>
+              <Slider
+                value={[thresholdPct]}
+                onValueChange={handleSliderChange}
+                max={100}
+                min={50}
+                step={1}
+              />
+              <p className="text-xs text-muted-foreground mt-2">
+                High Confidence = ≥ {thresholdPct}%. Low Confidence =
+                &nbsp;&lt; {thresholdPct}%.
+              </p>
             </div>
-            <Slider
-              value={[thresholdPct]}
-              onValueChange={handleSliderChange}
-              max={100}
-              min={50}
-              step={1}
-            />
-            <p className="text-xs text-muted-foreground mt-2">
-              High Confidence = ≥ {thresholdPct}%. Low Confidence =
-              &nbsp;&lt; {thresholdPct}%.
-            </p>
-          </div>
-          <Button
-            className="bg-blue-600 hover:bg-blue-700"
-            onClick={handleSaveThreshold}
-            disabled={!hasUnsavedChanges}
-          >
-            {hasUnsavedChanges ? "Save Threshold" : "Threshold Saved"}
-          </Button>
-        </CardContent>
-      </Card>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700"
+              onClick={handleSaveThreshold}
+              disabled={!hasUnsavedChanges}
+            >
+              {hasUnsavedChanges ? "Save Threshold" : "Threshold Saved"}
+            </Button>
+          </CardContent>
+        </Card>
 
-      {/* Email Templates */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Email Templates</CardTitle>
-          <CardDescription>Manage response templates</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2 max-h-56 overflow-y-auto">
-            {templates.map((template) => (
-              <div
-                key={template.id}
-                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-              >
-                <div>
-                  <p className="text-sm font-medium text-foreground">
-                    {template.name}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {template.uses} uses this month
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => startEditingTemplate(template)}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-8 w-8 text-muted-foreground"
-                    onClick={() => handleDeleteTemplate(template.id)}
-                    aria-label={`Delete ${template.name}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-
-            {templates.length === 0 && (
-              <p className="text-xs text-muted-foreground">
-                No templates yet. Add one below.
-              </p>
-            )}
-          </div>
-
-          {editingId && (
-            <div className="mt-4 border rounded-lg p-4 space-y-3 bg-gray-50">
-              <p className="text-xs font-semibold text-muted-foreground uppercase">
-                Edit Template
-              </p>
-              <div>
-                <label className="text-xs font-medium text-foreground">
-                  Template Name
-                </label>
-                <Input
-                  className="mt-1"
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-foreground">
-                  Template Body
-                </label>
-                <textarea
-                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  rows={6}
-                  value={editBody}
-                  onChange={(e) => setEditBody(e.target.value)}
-                />
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  You can use placeholders like{" "}
-                  <code className="font-mono">{`{student_name}`}</code> in the
-                  body.
-                </p>
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={cancelEditingTemplate}
+        {/* Email Templates */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Email Templates</CardTitle>
+            <CardDescription>Manage response templates</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2 max-h-56 overflow-y-auto">
+              {templates.map((template) => (
+                <div
+                  key={template.id}
+                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
                 >
-                  Cancel
-                </Button>
-                <Button size="sm" onClick={saveEditingTemplate}>
-                  Save Template
-                </Button>
-              </div>
-            </div>
-          )}
-
-          <Button
-            className="bg-blue-600 hover:bg-blue-700 w-full"
-            onClick={handleAddTemplate}
-          >
-            Add New Template
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* Knowledge Base */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Knowledge Base</CardTitle>
-          <CardDescription>Upload policies and documents</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Hidden input */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            className="hidden"
-            multiple
-            accept=".pdf,.docx,.txt"
-            onChange={(e) => handleFilesSelected(e.target.files)}
-          />
-
-          {/* Dropzone */}
-          <div
-            className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
-              isDragging
-                ? "border-blue-400 bg-blue-50/60"
-                : "border-border hover:bg-gray-50"
-            }`}
-            onClick={handleClickDropzone}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-          >
-            <p className="text-sm font-medium text-foreground">
-              Drop files here or click to upload
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              PDF, DOCX, TXT up to 10MB
-            </p>
-          </div>
-
-          {uploadError && (
-            <p className="text-xs text-red-600">{uploadError}</p>
-          )}
-
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-muted-foreground uppercase">
-              Recent Uploads ({uploads.length})
-            </p>
-
-            {uploads.length === 0 && (
-              <p className="text-xs text-muted-foreground">
-                No files uploaded yet.
-              </p>
-            )}
-
-            {uploads.map((file) => (
-              <div
-                key={file.id}
-                className="flex items-center justify-between bg-gray-50 p-2 rounded"
-              >
-                <div className="text-xs text-foreground truncate">
-                  {file.name}
+                  <div>
+                    <p className="text-sm font-medium text-foreground">
+                      {template.name}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {template.uses} uses this month
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => startEditingTemplate(template)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 text-muted-foreground"
+                      onClick={() => handleDeleteTemplate(template.id)}
+                      aria-label={`Delete ${template.name}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    {format(new Date(file.uploadedAt), "MMM d, yyyy")}
-                  </span>
+              ))}
+
+              {templates.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No templates yet. Add one below.
+                </p>
+              )}
+            </div>
+
+            {editingId && (
+              <div className="mt-4 border rounded-lg p-4 space-y-3 bg-gray-50">
+                <p className="text-xs font-semibold text-muted-foreground uppercase">
+                  Edit Template
+                </p>
+                <div>
+                  <label className="text-xs font-medium text-foreground">
+                    Template Name
+                  </label>
+                  <Input
+                    className="mt-1"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-foreground">
+                    Template Body
+                  </label>
+                  <textarea
+                    className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    rows={6}
+                    value={editBody}
+                    onChange={(e) => setEditBody(e.target.value)}
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    You can use placeholders like{" "}
+                    <code className="font-mono">{`{student_name}`}</code> in the
+                    body.
+                  </p>
+                </div>
+                <div className="flex justify-end gap-2">
                   <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7 text-muted-foreground"
-                    onClick={() => handleDeleteUpload(file.id)}
-                    aria-label={`Delete ${file.name}`}
+                    variant="outline"
+                    size="sm"
+                    onClick={cancelEditingTemplate}
                   >
-                    <Trash2 className="h-4 w-4" />
+                    Cancel
+                  </Button>
+                  <Button size="sm" onClick={saveEditingTemplate}>
+                    Save Template
                   </Button>
                 </div>
               </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+            )}
 
-      {/* Account Settings */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Account Settings</CardTitle>
-          <CardDescription>Manage your advisor profile</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <label className="text-sm font-medium">Name</label>
-            <Input
-              className="mt-2"
-              value={profile.name}
-              onChange={updateField("name")}
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 w-full"
+              onClick={handleAddTemplate}
+            >
+              Add New Template
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* Knowledge Base */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Knowledge Base</CardTitle>
+            <CardDescription>Upload policies and documents</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Hidden input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              multiple
+              accept=".pdf,.docx,.txt"
+              onChange={(e) => handleFilesSelected(e.target.files)}
             />
-          </div>
-          <div>
-            <label className="text-sm font-medium">Email</label>
-            <Input
-              className="mt-2"
-              value={profile.email}
-              onChange={updateField("email")}
-            />
-          </div>
-          <div>
-            <label className="text-sm font-medium">Department</label>
-            <Input
-              className="mt-2"
-              value={profile.department}
-              onChange={updateField("department")}
-            />
-          </div>
-          <Button
-            className="bg-blue-600 hover:bg-blue-700"
-            onClick={saveProfile}
-            disabled={!profileDirty}
-          >
-            {profileDirty ? "Update Profile" : "Profile Updated"}
-          </Button>
-        </CardContent>
-      </Card>
+
+            {/* Dropzone */}
+            <div
+              className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                isDragging
+                  ? "border-blue-400 bg-blue-50/60"
+                  : "border-border hover:bg-gray-50"
+              }`}
+              onClick={handleClickDropzone}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              <p className="text-sm font-medium text-foreground">
+                Drop files here or click to upload
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                PDF, DOCX, TXT up to 10MB
+              </p>
+            </div>
+
+            {uploadError && (
+              <p className="text-xs text-red-600">{uploadError}</p>
+            )}
+
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground uppercase">
+                Recent Uploads ({uploads.length})
+              </p>
+
+              {uploads.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No files uploaded yet.
+                </p>
+              )}
+
+              {uploads.map((file) => (
+                <div
+                  key={file.id}
+                  className="flex items-center justify-between bg-gray-50 p-2 rounded"
+                >
+                  <div className="text-xs text-foreground truncate">
+                    {file.name}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">
+                      {format(new Date(file.uploadedAt), "MMM d, yyyy")}
+                    </span>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-muted-foreground"
+                      onClick={() => handleDeleteUpload(file.id)}
+                      aria-label={`Delete ${file.name}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Account Settings */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Account Settings</CardTitle>
+            <CardDescription>Manage your advisor profile</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <label className="text-sm font-medium">Name</label>
+              <Input
+                className="mt-2"
+                value={profile.name}
+                onChange={updateField("name")}
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Email</label>
+              <Input
+                className="mt-2"
+                value={profile.email}
+                onChange={updateField("email")}
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Department</label>
+              <Input
+                className="mt-2"
+                value={profile.department}
+                onChange={updateField("department")}
+              />
+            </div>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700"
+              onClick={saveProfile}
+              disabled={!profileDirty}
+            >
+              {profileDirty ? "Update Profile" : "Profile Updated"}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

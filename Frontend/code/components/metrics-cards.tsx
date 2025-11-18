@@ -44,7 +44,7 @@ type Email = {
   received_at: string;
 };
 
-type ChartPoint = { date: string; pending: number };
+type ChartPoint = { date: string; count: number };
 
 export default function MetricsCards() {
   const [metrics, setMetrics] = useState<MetricsData | null>(null);
@@ -113,7 +113,7 @@ export default function MetricsCards() {
     );
   }
 
-  function buildDailyData(): ChartPoint[] {
+  function buildDailyData(sourceEmails: Email[]): ChartPoint[] {
     const today = new Date();
     const days: ChartPoint[] = [];
 
@@ -122,18 +122,18 @@ export default function MetricsCards() {
       d.setDate(today.getDate() - i);
       const label = d.toLocaleDateString(undefined, { weekday: "short" });
 
-      const count = reviewEmails.filter((e) => {
+      const count = sourceEmails.filter((e) => {
         const t = new Date(e.received_at);
         return sameDay(t, d);
       }).length;
 
-      days.push({ date: label, pending: count });
+      days.push({ date: label, count });
     }
 
     return days;
   }
 
-  function buildWeeklyData(): ChartPoint[] {
+  function buildWeeklyData(sourceEmails: Email[]): ChartPoint[] {
     const today = new Date();
     const weeks: ChartPoint[] = [];
 
@@ -150,17 +150,17 @@ export default function MetricsCards() {
           ? "Last week"
           : `${w} weeks ago`;
 
-      const count = reviewEmails.filter((e) => {
+      const count = sourceEmails.filter((e) => {
         const t = new Date(e.received_at);
         return t >= start && t < end;
       }).length;
 
-      weeks.push({ date: label, pending: count });
+      weeks.push({ date: label, count });
     }
     return weeks;
   }
 
-  function buildMonthlyData(): ChartPoint[] {
+  function buildMonthlyData(sourceEmails: Email[]): ChartPoint[] {
     const today = new Date();
     const months: ChartPoint[] = [];
 
@@ -177,12 +177,12 @@ export default function MetricsCards() {
       const start = new Date(year, month, 1);
       const end = new Date(year, month + 1, 1);
 
-      const count = reviewEmails.filter((e) => {
+      const count = sourceEmails.filter((e) => {
         const t = new Date(e.received_at);
         return t >= start && t < end;
       }).length;
 
-      months.push({ date: label, pending: count });
+      months.push({ date: label, count });
     }
 
     return months;
@@ -190,10 +190,19 @@ export default function MetricsCards() {
 
   const chartData =
     chartView === "daily"
-      ? buildDailyData()
+      ? buildDailyData(emails)
       : chartView === "weekly"
-      ? buildWeeklyData()
-      : buildMonthlyData();
+      ? buildWeeklyData(emails)
+      : buildMonthlyData(emails);
+
+  const adjustedChartData =
+    chartView === "daily" && chartData.length > 0
+      ? chartData.map((point, idx) =>
+          idx === chartData.length - 1
+            ? { ...point, count: metrics?.emailsToday ?? point.count }
+            : point,
+        )
+      : chartData;
 
   const oldestPendingLabel = (() => {
     if (reviewEmails.length === 0) return "No emails pending review";
@@ -357,7 +366,7 @@ export default function MetricsCards() {
       <Card className="border border-blue-100 shadow-sm">
         <CardHeader className="pb-3 flex flex-row items-center justify-between">
           <CardTitle className="text-base font-semibold">
-            Pending Responses Over Time
+            Emails Received Over Time
           </CardTitle>
           <div className="flex gap-2">
             <Button
@@ -395,7 +404,7 @@ export default function MetricsCards() {
 
         <CardContent>
           <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={chartData}>
+            <LineChart data={adjustedChartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis dataKey="date" stroke="#6b7280" />
               <YAxis stroke="#6b7280" />
@@ -404,11 +413,11 @@ export default function MetricsCards() {
                   backgroundColor: "#f3f4f6",
                   border: "1px solid #d1d5db",
                 }}
-                formatter={(value) => [`${value} pending`, "Pending emails"]}
+                formatter={(value) => [`${value} emails`, "Emails received"]}
               />
               <Line
                 type="monotone"
-                dataKey="pending"
+                dataKey="count"
                 stroke="#2563eb"
                 strokeWidth={2}
                 dot={{ fill: "#2563eb", r: 4 }}
