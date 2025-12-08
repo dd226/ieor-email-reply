@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import ManualReviewTable from "@/components/manual-review-table";
 import AutoSentTable from "@/components/auto-sent-table";
 import { SAMPLE_EMAILS } from "@/components/sample-emails";
+import { CheckSquare, Square, Trash2, Send, Save, X, RotateCcw, Clock, AlertTriangle } from "lucide-react";
 
 type FilterType = "all" | "today" | "high" | "low";
 type EmailStatus = "auto" | "review";
@@ -31,6 +32,59 @@ type Metrics = {
 const BACKEND_URL = "http://127.0.0.1:8000";
 const CONFIDENCE_THRESHOLD_KEY = "confidenceThresholdPct";
 const DEFAULT_CONFIDENCE_THRESHOLD_PCT = 90; // fallback if nothing saved
+const DRAFTS_STORAGE_KEY = "emailDrafts";
+
+// Helper to calculate waiting time
+type WaitingTimeInfo = {
+  label: string;
+  minutes: number;
+  urgency: "low" | "medium" | "high" | "critical";
+};
+
+function getWaitingTime(received_at: string): WaitingTimeInfo {
+  if (!received_at) return { label: "—", minutes: 0, urgency: "low" };
+
+  const iso =
+    received_at.endsWith("Z") || received_at.includes("+")
+      ? received_at
+      : received_at + "Z";
+
+  const received = new Date(iso);
+  const now = new Date();
+  let diffMs = now.getTime() - received.getTime();
+  if (diffMs < 0) diffMs = 0;
+
+  const diffMinutes = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  let label: string;
+  if (diffMinutes < 1) {
+    label = "< 1m";
+  } else if (diffMinutes < 60) {
+    label = `${diffMinutes}m`;
+  } else if (diffHours < 24) {
+    const mins = diffMinutes % 60;
+    label = mins > 0 ? `${diffHours}h ${mins}m` : `${diffHours}h`;
+  } else {
+    const hours = diffHours % 24;
+    label = hours > 0 ? `${diffDays}d ${hours}h` : `${diffDays}d`;
+  }
+
+  // Determine urgency level
+  let urgency: "low" | "medium" | "high" | "critical";
+  if (diffHours < 4) {
+    urgency = "low";
+  } else if (diffHours < 12) {
+    urgency = "medium";
+  } else if (diffHours < 24) {
+    urgency = "high";
+  } else {
+    urgency = "critical";
+  }
+
+  return { label, minutes: diffMinutes, urgency };
+}
 
 export default function EmailsTab() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -46,6 +100,7 @@ export default function EmailsTab() {
   // detail panel
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
   const [replyDraft, setReplyDraft] = useState<string>("");
+  const [draftSaved, setDraftSaved] = useState<boolean>(false);
 
   // metrics from backend
   const [metrics, setMetrics] = useState<Metrics | null>(null);
@@ -54,6 +109,13 @@ export default function EmailsTab() {
   const [confidenceThreshold, setConfidenceThreshold] = useState<number>(
     DEFAULT_CONFIDENCE_THRESHOLD_PCT / 100,
   );
+
+  // Bulk selection
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkActionLoading, setBulkActionLoading] = useState<boolean>(false);
+
+  // Saved drafts (localStorage)
+  const [savedDrafts, setSavedDrafts] = useState<Record<number, string>>({});
 
   const filters: { id: FilterType; label: string; description: string }[] = [
     { id: "all", label: "All", description: "Show all emails" },
@@ -86,6 +148,26 @@ export default function EmailsTab() {
       setConfidenceThreshold(pct / 100);
     }
   }, []);
+
+  // --- Load saved drafts from localStorage ---
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const stored = window.localStorage.getItem(DRAFTS_STORAGE_KEY);
+    if (stored) {
+      try {
+        setSavedDrafts(JSON.parse(stored));
+      } catch {
+        // ignore parse errors
+      }
+    }
+  }, []);
+
+  // --- Save drafts to localStorage whenever they change ---
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(savedDrafts));
+  }, [savedDrafts]);
 
   // --- Fetch emails from backend ---
   async function fetchEmails() {
@@ -176,6 +258,13 @@ export default function EmailsTab() {
         body: JSON.stringify(body),
       });
 
+      // Remove from saved drafts after approval
+      setSavedDrafts((prev) => {
+        const updated = { ...prev };
+        delete updated[emailId];
+        return updated;
+      });
+
       await Promise.all([fetchEmails(), fetchMetrics()]);
     } catch (err) {
       console.error(err);
@@ -190,6 +279,20 @@ export default function EmailsTab() {
         method: "DELETE",
       });
 
+      // Remove from saved drafts
+      setSavedDrafts((prev) => {
+        const updated = { ...prev };
+        delete updated[emailId];
+        return updated;
+      });
+
+      // Remove from selection
+      setSelectedIds((prev) => {
+        const updated = new Set(prev);
+        updated.delete(emailId);
+        return updated;
+      });
+
       await Promise.all([fetchEmails(), fetchMetrics()]);
     } catch (err) {
       console.error(err);
@@ -197,16 +300,129 @@ export default function EmailsTab() {
     }
   }
 
+  // --- Save draft without sending ---
+  function handleSaveDraft(emailId: number, draft: string) {
+    setSavedDrafts((prev) => ({
+      ...prev,
+      [emailId]: draft,
+    }));
+    setDraftSaved(true);
+    setTimeout(() => setDraftSaved(false), 2000);
+  }
+
+  // --- Bulk approve selected emails ---
+  async function handleBulkApprove() {
+    if (selectedIds.size === 0) return;
+
+    setBulkActionLoading(true);
+    try {
+      const promises = Array.from(selectedIds).map((id) => {
+        const draft = savedDrafts[id];
+        return handleApprove(id, draft);
+      });
+      await Promise.all(promises);
+      setSelectedIds(new Set());
+    } catch (err) {
+      console.error(err);
+      setError("Could not approve selected emails");
+    } finally {
+      setBulkActionLoading(false);
+    }
+  }
+
+  // --- Bulk delete selected emails ---
+  async function handleBulkDelete() {
+    if (selectedIds.size === 0) return;
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${selectedIds.size} email(s)?`
+    );
+    if (!confirmed) return;
+
+    setBulkActionLoading(true);
+    try {
+      const promises = Array.from(selectedIds).map((id) => handleDelete(id));
+      await Promise.all(promises);
+      setSelectedIds(new Set());
+    } catch (err) {
+      console.error(err);
+      setError("Could not delete selected emails");
+    } finally {
+      setBulkActionLoading(false);
+    }
+  }
+
+  // --- Toggle selection for an email ---
+  function toggleSelect(emailId: number) {
+    setSelectedIds((prev) => {
+      const updated = new Set(prev);
+      if (updated.has(emailId)) {
+        updated.delete(emailId);
+      } else {
+        updated.add(emailId);
+      }
+      return updated;
+    });
+  }
+
+  // --- Select all visible emails ---
+  function selectAllVisible(emails: Email[]) {
+    const allIds = emails.map((e) => e.id);
+    setSelectedIds(new Set(allIds));
+  }
+
+  // --- Deselect all ---
+  function deselectAll() {
+    setSelectedIds(new Set());
+  }
+
   // --- Selecting an email (for detail panel) ---
   function handleSelect(email: Email) {
     setSelectedEmail(email);
-    setReplyDraft(email.suggested_reply || "");
+    // Load saved draft if exists, otherwise use suggested_reply
+    const draft = savedDrafts[email.id] ?? email.suggested_reply ?? "";
+    setReplyDraft(draft);
+    setDraftSaved(false);
   }
 
   function closeDetail() {
     setSelectedEmail(null);
     setReplyDraft("");
+    setDraftSaved(false);
   }
+
+  // --- Reset reply to original AI suggestion ---
+  function resetToOriginal() {
+    if (selectedEmail) {
+      setReplyDraft(selectedEmail.suggested_reply || "");
+      // Remove saved draft
+      setSavedDrafts((prev) => {
+        const updated = { ...prev };
+        delete updated[selectedEmail.id];
+        return updated;
+      });
+    }
+  }
+
+  // --- Keyboard shortcuts ---
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (!selectedEmail) return;
+
+      // Don't trigger shortcuts when typing in textarea
+      if (e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.key === "Escape") {
+        closeDetail();
+      }
+    },
+    [selectedEmail]
+  );
+
+  useEffect(() => {
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
 
   useEffect(() => {
     fetchEmails();
@@ -261,6 +477,14 @@ export default function EmailsTab() {
   const filteredReviewEmails = filterEmails(reviewEmails);
   const filteredAutoEmails = filterEmails(autoEmails);
 
+  // Count selected in current view
+  const selectedInView = activeSection === "review"
+    ? filteredReviewEmails.filter((e) => selectedIds.has(e.id)).length
+    : filteredAutoEmails.filter((e) => selectedIds.has(e.id)).length;
+
+  const currentEmails = activeSection === "review" ? filteredReviewEmails : filteredAutoEmails;
+  const allVisibleSelected = currentEmails.length > 0 && currentEmails.every((e) => selectedIds.has(e.id));
+
   if (loading && !seeding && reviewEmails.length === 0 && autoEmails.length === 0) {
     return (
       <div className="space-y-6">
@@ -280,6 +504,9 @@ export default function EmailsTab() {
   }
 
   const thresholdPctLabel = Math.round(confidenceThreshold * 100);
+
+  // Check if current email has unsaved changes
+  const hasUnsavedChanges = selectedEmail && replyDraft !== (savedDrafts[selectedEmail.id] ?? selectedEmail.suggested_reply);
 
   return (
     <>
@@ -349,6 +576,42 @@ export default function EmailsTab() {
           </span>
         </div>
 
+        {/* Bulk Actions Bar */}
+        {selectedIds.size > 0 && (
+          <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <span className="text-sm font-medium text-blue-800">
+              {selectedIds.size} email{selectedIds.size > 1 ? "s" : ""} selected
+            </span>
+            <div className="flex gap-2 ml-auto">
+              {activeSection === "review" && (
+                <button
+                  onClick={handleBulkApprove}
+                  disabled={bulkActionLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-60"
+                >
+                  <Send className="h-4 w-4" />
+                  Approve & Send All
+                </button>
+              )}
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkActionLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-60"
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete All
+              </button>
+              <button
+                onClick={deselectAll}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-gray-200 text-foreground hover:bg-gray-300"
+              >
+                <X className="h-4 w-4" />
+                Clear Selection
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Tabs */}
         <div className="flex gap-4 border-b border-border">
           <button
@@ -376,13 +639,30 @@ export default function EmailsTab() {
         {/* Tables + per-section search boxes */}
         {activeSection === "review" && (
           <div className="space-y-4">
-            {/* Search bar for Needs Review */}
-            <Input
-              placeholder="Search by student name, UNI, or subject..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="max-w-md"
-            />
+            {/* Search bar + Select All for Needs Review */}
+            <div className="flex items-center gap-3">
+              <Input
+                placeholder="Search by student name, UNI, or subject..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="max-w-md"
+              />
+              {filteredReviewEmails.length > 0 && (
+                <button
+                  onClick={() =>
+                    allVisibleSelected ? deselectAll() : selectAllVisible(filteredReviewEmails)
+                  }
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium bg-gray-100 text-foreground hover:bg-gray-200"
+                >
+                  {allVisibleSelected ? (
+                    <CheckSquare className="h-4 w-4" />
+                  ) : (
+                    <Square className="h-4 w-4" />
+                  )}
+                  {allVisibleSelected ? "Deselect All" : "Select All"}
+                </button>
+              )}
+            </div>
 
             <ManualReviewTable
               emails={filteredReviewEmails}
@@ -390,25 +670,47 @@ export default function EmailsTab() {
               onApprove={(id) => handleApprove(id)}
               onDelete={handleDelete}
               onSelect={handleSelect}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+              savedDrafts={savedDrafts}
             />
           </div>
         )}
 
         {activeSection === "auto" && (
           <div className="space-y-4">
-            {/* Search bar for Approved */}
-            <Input
-              placeholder="Search by student name, UNI, or subject..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="max-w-md"
-            />
+            {/* Search bar + Select All for Approved */}
+            <div className="flex items-center gap-3">
+              <Input
+                placeholder="Search by student name, UNI, or subject..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="max-w-md"
+              />
+              {filteredAutoEmails.length > 0 && (
+                <button
+                  onClick={() =>
+                    allVisibleSelected ? deselectAll() : selectAllVisible(filteredAutoEmails)
+                  }
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium bg-gray-100 text-foreground hover:bg-gray-200"
+                >
+                  {allVisibleSelected ? (
+                    <CheckSquare className="h-4 w-4" />
+                  ) : (
+                    <Square className="h-4 w-4" />
+                  )}
+                  {allVisibleSelected ? "Deselect All" : "Select All"}
+                </button>
+              )}
+            </div>
 
             <AutoSentTable
               emails={filteredAutoEmails}
               searchTerm={searchTerm}
               onDelete={handleDelete}
               onSelect={handleSelect}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
             />
           </div>
         )}
@@ -438,13 +740,38 @@ export default function EmailsTab() {
                   Received:{" "}
                   {new Date(selectedEmail.received_at).toLocaleString()}
                 </p>
+                {/* Waiting time indicator */}
+                {selectedEmail.status === "review" && (() => {
+                  const waitTime = getWaitingTime(selectedEmail.received_at);
+                  return (
+                    <div
+                      className={`inline-flex items-center gap-1.5 mt-1 rounded-full px-2.5 py-1 text-xs font-medium ${
+                        waitTime.urgency === "low"
+                          ? "bg-green-100 text-green-800"
+                          : waitTime.urgency === "medium"
+                          ? "bg-yellow-100 text-yellow-800"
+                          : waitTime.urgency === "high"
+                          ? "bg-orange-100 text-orange-800"
+                          : "bg-red-100 text-red-800"
+                      }`}
+                    >
+                      {waitTime.urgency === "critical" ? (
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                      ) : (
+                        <Clock className="h-3.5 w-3.5" />
+                      )}
+                      Waiting: {waitTime.label}
+                      {waitTime.urgency === "critical" && " — Urgent!"}
+                    </div>
+                  );
+                })()}
               </div>
               <button
                 onClick={closeDetail}
-                className="text-sm text-muted-foreground hover:text-foreground"
+                className="text-sm text-muted-foreground hover:text-foreground p-1"
                 aria-label="Close details"
               >
-                ✕
+                <X className="h-5 w-5" />
               </button>
             </div>
 
@@ -458,12 +785,24 @@ export default function EmailsTab() {
 
             {/* AI reply */}
             <div className="mb-2">
-              <h4 className="text-sm font-semibold mb-1">AI-suggested reply</h4>
+              <div className="flex items-center justify-between mb-1">
+                <h4 className="text-sm font-semibold">AI-suggested reply</h4>
+                {selectedEmail.status === "review" && (
+                  <button
+                    onClick={resetToOriginal}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300 transition-colors"
+                    title="Reset to original AI suggestion"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Reset to Original
+                  </button>
+                )}
+              </div>
 
               {selectedEmail.status === "review" ? (
                 // Editable textarea when still needing review
                 <textarea
-                  className="w-full border border-border rounded-md p-2 text-sm min-h-[160px] resize-vertical"
+                  className="w-full border border-border rounded-md p-2 text-sm min-h-[160px] resize-vertical focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   value={replyDraft}
                   onChange={(e) => setReplyDraft(e.target.value)}
                 />
@@ -475,22 +814,47 @@ export default function EmailsTab() {
               )}
             </div>
 
-            <p className="text-xs text-muted-foreground mb-4">
-              Confidence: {(selectedEmail.confidence * 100).toFixed(0)}%
-            </p>
+            {/* Confidence + Draft indicator */}
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-xs text-muted-foreground">
+                Confidence: {(selectedEmail.confidence * 100).toFixed(0)}%
+              </p>
+              {savedDrafts[selectedEmail.id] && (
+                <span className="text-xs text-amber-600 font-medium">
+                  📝 Draft saved
+                </span>
+              )}
+              {draftSaved && (
+                <span className="text-xs text-green-600 font-medium animate-pulse">
+                  ✓ Saved!
+                </span>
+              )}
+            </div>
 
-            <div className="flex gap-2">
-              {/* ONLY show Approve button when email is NOT approved */}
+            {/* Action buttons */}
+            <div className="flex flex-wrap gap-2">
+              {/* ONLY show these buttons when email is NOT approved */}
               {selectedEmail.status === "review" && (
-                <button
-                  onClick={async () => {
-                    await handleApprove(selectedEmail.id, replyDraft);
-                    closeDetail();
-                  }}
-                  className="px-4 py-2 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-700"
-                >
-                  Approve Reply
-                </button>
+                <>
+                  <button
+                    onClick={async () => {
+                      await handleApprove(selectedEmail.id, replyDraft);
+                      closeDetail();
+                    }}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-700"
+                  >
+                    <Send className="h-4 w-4" />
+                    Approve & Send
+                  </button>
+                  <button
+                    onClick={() => handleSaveDraft(selectedEmail.id, replyDraft)}
+                    disabled={!hasUnsavedChanges}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Save className="h-4 w-4" />
+                    Save Draft
+                  </button>
+                </>
               )}
 
               {/* Delete is always available */}
@@ -499,8 +863,9 @@ export default function EmailsTab() {
                   await handleDelete(selectedEmail.id);
                   closeDetail();
                 }}
-                className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700"
               >
+                <Trash2 className="h-4 w-4" />
                 Delete
               </button>
 
@@ -511,6 +876,11 @@ export default function EmailsTab() {
                 Close
               </button>
             </div>
+
+            {/* Keyboard hint */}
+            <p className="mt-4 text-xs text-muted-foreground">
+              Press <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">Esc</kbd> to close
+            </p>
           </div>
         </div>
       )}

@@ -1,37 +1,184 @@
 [
   {
-    "id": "registrar_registration_deadlines",
-    "title": "Registrar Office – Registration Deadlines",
-    "url": "https://university.example.edu/registrar/registration-deadlines",
-    "content": "The Registrar's Office maintains the official academic calendar. Registration for fall and spring terms closes at 11:59 p.m. on the published deadline date. Students who miss the deadline must submit an add/drop form with advisor approval. The calendar also lists late registration penalties and appeal instructions.",
-    "tags": ["registration", "deadlines", "add drop"]
+    "id": "ieor_undergraduate_advising",
+    "title": "IEOR Undergraduate Advising & Resources",
+    "url": "https://ieor.columbia.edu/undergraduate-advising-resources",
+    "content": "Each IEOR student is assigned to a Departmental faculty advisor to guide the student through the major curriculum. Your CSA and Departmental advisors are listed in your Academic Profile in Student Services Online (SSOL). Students must complete and track their major degree progress using the Program Plan. These Program Plans and bulletins are provided to assist students with their academic course scheduling. Students should follow their designated bulletin (bulletin year during the second year) and take core courses in the prescribed semester. Delaying core courses is not permitted and may result in future scheduling conflicts and possible delay in graduation. Request to drop a major core requirement during the designated semester may result in an unofficial withdrawal (UW) on the transcript. Additional changes to the program plan must be approved by the academic advisor, the faculty advisor, or the program director. For career advising, the best resource is the Center for Career Education. Set up an appointment or go in for their drop-in hours.",
+    "tags": ["advising", "faculty advisor", "program plan", "core courses", "career"]
   },
   {
-    "id": "registrar_transcript_portal",
-    "title": "Registrar – Ordering Official Transcripts",
-    "url": "https://university.example.edu/registrar/transcripts",
-    "content": "Official transcript orders are submitted through the secure transcript portal. Students authenticate with their university credentials, choose electronic or paper delivery, and pay a $10 fee per copy. Processing takes one to two business days. Unofficial copies are available instantly in the academic records tile.",
-    "tags": ["transcript", "records"]
+    "id": "ieor_fieldwork_internship",
+    "title": "IEOR Fieldwork and Internship Credit",
+    "url": "https://ieor.columbia.edu/undergraduate-advising-resources",
+    "content": "Students in the IEOR Department have an option to pursue internship opportunities that complement their academic studies and earn credits. Schedule permitting, students may engage up to 20 hours per week during an academic term (fall and spring semesters). Students may take IEOR E3999 Fieldwork for a maximum total of three (3) credits, and the credits will count toward the 128-credit requirement for the bachelor of science degree. However, fieldwork credits: (1) may not also count toward a major core, technical, elective, and non-technical requirements and (2) may not be taken for pass/fail. Submit a Fieldwork Request Form for Departmental review for IEOR E3999 Fieldwork. Employment may not exceed 20 hours per week during the academic year. At the conclusion of the term, you are required to submit a final written report detailing your internship experience and a written letter of evaluation from your internship supervisor.",
+    "tags": ["internship", "fieldwork", "IEOR E3999", "credits", "work experience"]
   },
   {
-    "id": "advising_appointments",
-    "title": "Academic Advising – Appointment Scheduling",
-    "url": "https://university.example.edu/advising/appointments",
-    "content": "Advising appointments are scheduled through the Navigate Student app. Standard meetings last 30 minutes, and students may choose in-person or Zoom formats. The site includes directions for requesting accommodations and instructions for adding topics to the appointment notes so advisors can prepare.",
-    "tags": ["advising", "appointments"]
+    "id": "ieor_cpt_opt_international",
+    "title": "IEOR CPT and OPT for International Students",
+    "url": "https://ieor.columbia.edu/masters-advising-resources",
+    "content": "For F-1 students requesting Curricular Practical Training (CPT) during the academic terms, please refer to ISSO for F-1 Student Eligibility. For J-1 students, please contact your J-1 sponsor and ISSO to discuss your eligibility. Submit a Fieldwork Request Form with all of the required information. On the form, you will be prompted to submit a CPT Request Form at the end. Please leave section 3 blank on the CPT Request Form as it will be signed by the department. Once approved, the department will notify you via e-mail. For OPT applications, please upload your F-1 Post-Completion OPT Adviser Form at the end of the application. Leave the bottom section entitled 'To Be Completed By The Academic Department' blank. The department will complete this section and return it to you via email. Please do not send CPT/OPT request forms to faculty advisors.",
+    "tags": ["CPT", "OPT", "international students", "F-1", "J-1", "ISSO"]
   },
   {
-    "id": "records_course_withdrawal",
-    "title": "Records Office – Course Withdrawal",
-    "url": "https://university.example.edu/records/course-withdrawal",
-    "content": "To withdraw after the add/drop window, students download the Course Withdrawal form, gather instructor and advisor signatures, and submit the completed packet to Records before the posted deadline. The page explains how W grades appear on transcripts and outlines potential impacts to financial aid and international student status.",
-    "tags": ["withdrawal", "records"]
+    "id": "ieor_technical_electives",
+    "title": "IEOR Undergraduate Technical Electives",
+    "url": "https://ieor.columbia.edu/undergraduate/electives",
+    "content": "At least 6 credits of Technical electives needs to have the 'IEOR' course code and be 3000-level and up. Exceptions are courses that are in conjunction with IEOR such as CSOR, EEOR, and ORCS. Pre-approved technical electives include: IEOR E4008 Computational Discrete Optimization, IEOR E4405 Scheduling, IEOR E4505 OR in Public Policy, IEOR E4506 Designing Digital Operating Models, IEOR E4507 Healthcare Operations Management, IEOR E4521 Systems Engineering Tools and Methods, IEOR E4525 Machine Learning for OR & FE, IEOR E4540 Data Mining, IEOR E4526 Analytics on the Cloud, IEOR E4601 Dynamic Pricing & Revenue Management, CSOR 4231 Analysis of Algorithms, ORCA 2500 Introduction to Data Science (only if taken by end of sophomore year), ECON W3412 Introduction to Econometrics. If there are other electives of interest, the student should bring the course description to his or her faculty advisor for review.",
+    "tags": ["electives", "technical electives", "IEOR courses", "course requirements"]
   },
   {
-    "id": "financial_aid_overview",
-    "title": "Financial Aid – Understanding Your Award",
-    "url": "https://university.example.edu/financial-aid/status",
-    "content": "The financial aid status page walks students through reviewing outstanding checklist items, accepting loans, and verifying disbursement dates. Contact options include calling the office at (555) 123-4567 or emailing finaid@university.edu for personalized guidance.",
-    "tags": ["financial aid", "billing"]
+    "id": "ieor_management_electives",
+    "title": "IEOR Management Electives for OR:EMS",
+    "url": "https://ieor.columbia.edu/undergraduate/electives",
+    "content": "The undergraduate OR:EMS concentration requires a total of twelve (12) points of technical electives equivalent to four (4) courses and nine (9) points of management electives equivalent to three (3) courses. Two of the four technical electives must have an IEOR designation. Management electives include: IEOR E4550 Entrepreneurial Business Creation for Engineers, IEOR E4998 Managing Technological Innovation and Entrepreneurship, IEOR E4510 Project Management (Seniors Only). If there are other electives of interest, the student should bring the course description to his or her faculty advisor for review.",
+    "tags": ["management electives", "OR:EMS", "concentration", "electives"]
+  },
+  {
+    "id": "ieor_orfe_electives",
+    "title": "IEOR OR:FE Financial Engineering Electives",
+    "url": "https://ieor.columbia.edu/undergraduate/electives",
+    "content": "The undergraduate OR:FE concentration requires a total of nine (9) points of electives equivalent to three (3) courses. Pre-approved electives for OR:FE include: IEOR E4711 Global Capital Markets or FINC B6302 Capital Markets and Investments (students may not take both), IEOR E4720-E4729 Topics in Quantitative Finance Series, IEOR E4731 Credit Risk Modeling and Derivatives (Seniors Only). Students in OR:FE must take IEOR E3658 Probability for Engineers during or before third semester. Students who take IEOR E3658 may not take W4150 due to significant overlap.",
+    "tags": ["OR:FE", "financial engineering", "electives", "quantitative finance"]
+  },
+  {
+    "id": "ieor_degree_requirements",
+    "title": "IEOR Undergraduate Degree Requirements",
+    "url": "https://bulletin.columbia.edu/columbia-engineering/academic-departments-programs/industrial-engineering-operations-research/undergraduate-programs/",
+    "content": "Students must complete a minimum of 128 points to graduate. The linear algebra requirement may be filled by either MATH UN2010 or APMA E3101 or COMS W3251. ENGI E1006 can be replaced by COMS W1004 or COMS W1007. IEOR E2000 can be replaced by COMS W3134 and COMS W4111. Students cannot get credit for IEOR E2000 if IEOR E2000 is taken after COMS W3134 and COMS W4111. 15 points total of technical electives required. At least 6 points need to be at least 3000 level with the prefix IEOR, ORCS, or CSOR. 3 points total of non-technical electives required. Cannot double-count non-technical electives. Taking required courses later than the prescribed semester is not permitted.",
+    "tags": ["degree requirements", "credits", "graduation", "core courses", "128 points"]
+  },
+  {
+    "id": "ieor_operations_research_bs",
+    "title": "Operations Research BS Program",
+    "url": "https://ieor.columbia.edu/undergraduate/operations-research",
+    "content": "Operations Research is an applied science concerned with quantitative decision problems, generally involving the allocation and control of limited resources. At the undergraduate level, it offers foundational courses in probability, statistics, applied mathematics, simulation, and optimization, with professionally oriented operations research courses. The curriculum is well suited for students with an aptitude for mathematics applications. It prepares graduates for professional employment as operations research analysts with professional services, financial services, and big technology organizations. The BSOR program requires 15 Technical Elective credits (including 6 credits of IEOR coursework) and 3 Management elective credits. Undergraduates are strongly recommended to follow the sequence of courses as outlined in the SEAS Bulletin.",
+    "tags": ["operations research", "BSOR", "major", "curriculum"]
+  },
+  {
+    "id": "ieor_industrial_engineering_bs",
+    "title": "Industrial Engineering BS Program",
+    "url": "https://bulletin.columbia.edu/columbia-engineering/academic-departments-programs/industrial-engineering-operations-research/undergraduate-programs/industrial-engineering-bs/",
+    "content": "The undergraduate Industrial Engineering program is designed to develop the technical skills and intellectual discipline needed by graduates to become leaders in industrial engineering and related professions. The program is distinctive in its emphasis on quantitative, economic, computer-aided approaches to production and service management problems. It is focused on providing an experimental and mathematical problem-formulating and problem-solving framework for industrial engineering work. The curriculum provides a broad foundation in the current ideas, models, and methods of industrial engineering. It also includes a substantial component in the humanities and social sciences to help students understand the societal implications of their work. The undergraduate Industrial Engineering program requires a total of nine (9) points of technical electives equivalent to three (3) courses.",
+    "tags": ["industrial engineering", "BSIE", "major", "curriculum"]
+  },
+  {
+    "id": "ieor_advanced_track",
+    "title": "IEOR Undergraduate Advanced Track",
+    "url": "https://ieor.columbia.edu/undergraduate-advising-resources",
+    "content": "The Undergraduate Advanced Track is designed for advanced undergraduate students with the desire to pursue further education after graduation. Interested students may submit an application on the IEOR website. Students in the Advanced Track must complete IEOR E3700 Research Immersion in OR and Data Analytics and IEOR E3900 Undergraduate Research. IEOR E3900 can be taken repeatedly to count towards 128 credits. Only up to 3 credits can be counted as technical elective. Advanced Track electives include PhD-level courses such as IEOR E4106 Stochastic Models and IEOR E4004 Optimization Models and Methods.",
+    "tags": ["advanced track", "research", "graduate school", "PhD preparation"]
+  },
+  {
+    "id": "seas_course_withdrawal",
+    "title": "SEAS Course Withdrawal Process",
+    "url": "https://www.cc-seas.columbia.edu/sites/dsa/files/forms/Petition%20to%20Drop%20after%20the%20deadline%20-%20SEAS%20(packet).pdf",
+    "content": "SEAS students may drop most courses up until the 10th week of the semester with the approval of either their advising dean or faculty adviser, depending on the course. In exceptional circumstances, such as medical illness or family emergency, students may petition the Committee on Academic Standing (CAS) for permission to drop a course after the deadline. Petitions must be submitted by 3:00pm on Friday to be considered the following week. Students should expect an email notification of the Committee's decision within five business days. If CAS denies your petition, you may submit a written appeal to the SEAS Dean's Office. In order to drop a class that is required for your major, you must get the approval and signature of your faculty adviser. Students may not drop from a course if it will put them below 12 credits (except seniors who need fewer than 12 points to graduate).",
+    "tags": ["withdrawal", "drop course", "CAS", "deadline", "petition"]
+  },
+  {
+    "id": "seas_registration_change_of_program",
+    "title": "SEAS Registration and Change of Program",
+    "url": "https://www.cc-seas.columbia.edu/csa/faqs",
+    "content": "During the Change-of-Program period (the first two weeks of the semester, also known as Add/Drop), you can use normal web registration procedures through Vergil. After the Change-of-Program period and before the drop deadline (Post-Change of Program Add/Drop Period), students may request to add and drop certain courses, subject to approval by their school and/or the instructor, through Vergil. Students not able to complete their request via SSOL should complete a Registration Adjustment Form and submit it to the Center for Student Advising in 403 Lerner. SEAS students will also need their CSA adviser's signature on the form. To take more than 21 (SEAS) credits during a single semester, submit the Petition to Register Above the Credit Limit form to your adviser in the CSA.",
+    "tags": ["registration", "add drop", "change of program", "Vergil", "credits"]
+  },
+  {
+    "id": "seas_pass_fail",
+    "title": "SEAS Pass/Fail Grading Option",
+    "url": "https://www.cc-seas.columbia.edu/faq/topics/Classes",
+    "content": "Students in the Engineering program may choose to take a course for Pass/Fail. The Pass/D/F deadline is usually the 10th week of classes. During the Change of Program period, students may elect to change the grading option via SSOL. During the post change of program period and before the deadline, students should email the Registrar at registrar@columbia.edu with their request. After the deadline, students must petition the Committee on Academic Standing. Please see the Transcript Notations section under Academic Procedures and Standards in the Columbia Engineering Bulletin. Deadlines for changing your grading option are listed in the Registrar's Academic Calendar.",
+    "tags": ["pass fail", "grading", "P/D/F", "deadline"]
+  },
+  {
+    "id": "csa_advising_appointments",
+    "title": "CSA Academic Advising Appointments",
+    "url": "https://www.cc-seas.columbia.edu/csa/advising",
+    "content": "Every undergraduate in Columbia College and Columbia Engineering is assigned an adviser in the Center for Student Advising (CSA) who serves as a source of knowledge and support starting the summer before matriculation and continuing through graduation. CSA advisers have diverse educational and professional backgrounds. Your CSA adviser is a point of contact for: General academic questions, concerns, or difficulties; Registration questions and problems; Choosing a major; Connecting with faculty; Changes in academic program in consultation with faculty advisers; Receiving transfer, AP/IB/GCE, or summer course credit; Premed and prelaw requirements. The CSA is located in 403 Alfred Lerner Hall. Hours are Monday–Friday 9:00 a.m.–5:00 p.m. Phone: (212) 854-6378.",
+    "tags": ["advising", "CSA", "appointment", "academic support", "Lerner Hall"]
+  },
+  {
+    "id": "study_abroad_credit",
+    "title": "Study Abroad Academic Credit",
+    "url": "https://global.undergrad.columbia.edu/studyabroad/steps/credit",
+    "content": "In order for credits from study abroad to be considered for general transfer credit, you must apply and receive study abroad approval by the deadlines noted on the Center for Undergraduate Global Engagement program webpages. Students must be cleared to study on approved programs by October 1 for Spring semester and by March 1 for Fall semester or full academic year. The minimum grade necessary for transfer of credit is C-. Credit is not given for courses taken on a Pass/Fail basis. For Columbia Engineering students, you are eligible to get both technical and non-technical courses approved. You will need to petition the program and fill out the Summer/Outside Credit Form with your CSA Advising Dean. Students in Columbia-sponsored programs receive direct Columbia credit and the courses and grades appear on their academic transcript. You must maintain a 3.0 GPA to study abroad.",
+    "tags": ["study abroad", "transfer credit", "global engagement", "international"]
+  },
+  {
+    "id": "study_abroad_requirements",
+    "title": "Study Abroad Requirements and Policies",
+    "url": "https://bulletin.columbia.edu/columbia-college/study-abroad/",
+    "content": "You must be an enrolled student in good academic and disciplinary standing with a minimum cumulative GPA of 3.0, and must maintain a 3.0 GPA during the semester preceding the study abroad program. You must meet the prerequisites of your chosen program including any disciplinary and language requirements. All matriculated undergraduates who wish to participate in Columbia-Led, Columbia-Facilitated and/or Recognized international travel must first be cleared to participate in such program. The final 30 credits required for the degree must be taken while enrolled for study on Columbia's New York campus or on one of the Columbia-sponsored programs abroad. Courses taught abroad in subjects typically taught at Columbia professional schools (business, education, journalism) may not be eligible for credit.",
+    "tags": ["study abroad", "GPA requirement", "eligibility", "credits"]
+  },
+  {
+    "id": "ieor_research_opportunities",
+    "title": "IEOR Undergraduate Research Opportunities",
+    "url": "https://ieor.columbia.edu/undergraduate-advising-resources",
+    "content": "The IEOR department provides many exciting research and project opportunities to undergraduate students. To explore the diverse research areas within the department, please refer to the overview page on departmental research. IEOR students stay updated on the latest research and project opportunities via newsletters. Students are encouraged to take the initiative and contact faculty members directly for potential research collaborations. Students interested in participating in relevant conferences or other professional development endeavors may apply for financial support from the department by submitting an application. Please refer to the CC-SEAS Academic Integrity page for academic integrity policies.",
+    "tags": ["research", "undergraduate research", "faculty", "conferences"]
+  },
+  {
+    "id": "ieor_degree_application",
+    "title": "IEOR Degree Application and Graduation",
+    "url": "https://ieor.columbia.edu/masters-advising-resources",
+    "content": "Students must submit their Application for Degree on SSOL under 'Degree App Status'. Deadlines: May Completion - Apply for May degree conferral (Deadline: February 1). Summer Completion - Apply for October degree conferral (Deadline: August 1). December Completion - Apply for February degree conferral (Deadline: December 1). In some cases, students may require fewer than 12.0 credits in their final term in order to graduate. International students are allowed to register for the credits they need to complete program requirements and still maintain student status, even if this is fewer than 12.0 credits.",
+    "tags": ["graduation", "degree application", "SSOL", "commencement"]
+  },
+  {
+    "id": "ieor_course_approval",
+    "title": "IEOR Course Approval Process",
+    "url": "https://ieor.columbia.edu/masters-advising-resources",
+    "content": "Courses not on the pre-approved list for your degree program require approval from the academic team before taking the course. If you do not see the course on the list, you must request approval from the academic team via the course approval request form. Please make sure you review the pre-approved elective listing and your curriculum page when registering. If you are interested in taking courses from other graduate schools such as Graduate School of Business (GSB) or School of International and Public Affairs (SIPA), you may request such courses in late August. For academic questions or concerns, email the Academic Team using your Columbia email address. The team will not reply to emails sent using non-Columbia addresses.",
+    "tags": ["course approval", "electives", "cross-registration", "GSB", "SIPA"]
+  },
+  {
+    "id": "ieor_academic_standing",
+    "title": "IEOR Academic Standing Requirements",
+    "url": "https://ieor.columbia.edu/msor-curriculum",
+    "content": "Students are considered to be in good academic standing if they achieve grades of B- or higher in each of the core courses and maintain a cumulative GPA of 2.67 (B- average) or higher during each semester. Students who do not meet these standards are subject to academic review and are required to work with the academic team to develop their course schedule and to show academic progress in the following semester to be in good academic standing.",
+    "tags": ["academic standing", "GPA", "grades", "probation"]
+  },
+  {
+    "id": "registrar_academic_calendar",
+    "title": "Columbia Academic Calendar",
+    "url": "https://registrar.columbia.edu/content/academic-calendar",
+    "content": "The Registrar's Office maintains the official academic calendar. Dates are subject to change. Always refer to your SSOL/Vergil/CourseWorks accounts for the most up-to-date information about course registration and other calendar dates. Key dates include: Change of Program period (first two weeks), Course drop deadline (fifth week for most courses), Pass/D/F deadline (tenth week), Withdrawal deadline (Monday of last full week). Registration dates are based on seniority, with seniors registering first. Columbia College reserves the right to revise or amend this academic calendar at any time.",
+    "tags": ["academic calendar", "deadlines", "registration", "dates"]
+  },
+  {
+    "id": "seas_credit_limits",
+    "title": "SEAS Credit Limits and Overload",
+    "url": "https://www.cc-seas.columbia.edu/csa/faqs",
+    "content": "At a minimum, students must register for 12 points per semester. The maximum number of credits per semester is 21 for SEAS students. To take more than 21 credits during a single semester, submit the Petition to Register Above the Credit Limit form to your adviser in the CSA. Students must complete at least one term at Columbia before petitioning to exceed the credit limit. Students who do not make adequate progress to the degree (an average of 15.5 points per term) may face academic probation, suspension, or dismissal.",
+    "tags": ["credits", "overload", "minimum credits", "maximum credits"]
+  },
+  {
+    "id": "ieor_contact_admissions",
+    "title": "IEOR Contact Information",
+    "url": "https://ieor.columbia.edu/ieor-admissions",
+    "content": "For undergraduate admissions related questions, email ugrad-ask@columbia.edu or call 212-854-2522. The Columbia Office of Undergraduate Admissions oversees all aspects of undergraduate admission for the University. For graduate admissions-related questions, email seasgradmit@columbia.edu or call the admissions hotline at 212-854-2941 from 9am-12pm New York time, excluding weekends and University holidays. The department offers Master of Science programs in Financial Engineering, Business Analytics, Management Science & Engineering, Operations Research, and Industrial Engineering.",
+    "tags": ["contact", "admissions", "phone", "email"]
+  },
+  {
+    "id": "ieor_core_courses",
+    "title": "IEOR Required Core Courses",
+    "url": "https://bulletin.columbia.edu/columbia-engineering/academic-departments-programs/industrial-engineering-operations-research/",
+    "content": "Required core courses for IEOR undergraduate majors include: IEOR E3658 Probability for Engineers (must be taken during or before third semester for OR:FE), IEOR E3106/E4106 Stochastic Models (required for IE, OR:EMS, OR:FE, and OR, must be taken during or before fifth semester), IEOR E3402 Production and Inventory Planning (required for IE, OR, OR:EMS, must be taken during or before sixth semester), IEOR E3404 Simulation Modeling and Analysis (requires knowledge of programming language such as Python, C, C++ or Matlab), IEOR E4004 Optimization Models and Methods, IEOR E3608 and follow-up for optimization topics including integer optimization, convex optimization, and optimization under uncertainty.",
+    "tags": ["core courses", "required courses", "curriculum", "prerequisites"]
+  },
+  {
+    "id": "seas_tutoring_support",
+    "title": "Academic Support and Tutoring",
+    "url": "https://www.cc-seas.columbia.edu/faq/topics/Classes",
+    "content": "If you are struggling in a course, you should always first contact your professor or teaching assistant to discuss expectations, go over previous exams and papers, and clarify concepts and the material. It's also a good idea to contact your advising dean, who can help you review your study habits and create a plan. For more assistance, you can look for a tutor or visit a help room. Help rooms are sponsored by the academic departments and are staffed by graduate students. They are open at various times for students to drop by and ask questions about homework and material. There are also a variety of tutors available.",
+    "tags": ["tutoring", "help room", "academic support", "TA", "professor"]
+  },
+  {
+    "id": "columbia_withdrawal_leave",
+    "title": "University Withdrawal and Leave of Absence",
+    "url": "https://registrar.columbia.edu/content/withdrawal",
+    "content": "Submit Your Withdrawal or Leave of Absence Request Form to the appropriate office. The Student Affairs Office or other similarly functioning advising personnel at your school can offer guidance and assistance, including: School and University requirements, policies, and procedures related to ceasing attendance; Financial, academic and readmission implications resulting from ceasing attendance; General academic questions, concerns, or difficulties. Please note that informal actions such as notifying an instructor verbally or by email, or simply ceasing to attend a course, do not constitute an official drop. Students who stop attending without formally dropping or withdrawing will remain registered and will receive a grade from the instructor.",
+    "tags": ["withdrawal", "leave of absence", "readmission", "stop out"]
   }
 ]

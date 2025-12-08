@@ -1,12 +1,15 @@
 "use client";
 
 import { Email } from "./emails-tab";
+import { CheckSquare, Square } from "lucide-react";
 
 type AutoSentTableProps = {
   emails?: Email[];
   searchTerm?: string;
   onDelete: (id: number) => void;
   onSelect: (email: Email) => void;
+  selectedIds?: Set<number>;
+  onToggleSelect?: (id: number) => void;
 };
 
 function formatReceivedEastern(received_at: string) {
@@ -31,6 +34,8 @@ export default function AutoSentTable({
   emails = [],
   onDelete,
   onSelect,
+  selectedIds = new Set(),
+  onToggleSelect,
 }: AutoSentTableProps) {
   if (emails.length === 0) {
     return (
@@ -45,6 +50,11 @@ export default function AutoSentTable({
       <table className="w-full text-sm">
         <thead className="bg-muted">
           <tr>
+            {onToggleSelect && (
+              <th className="px-3 py-2 text-left w-[40px]">
+                <span className="sr-only">Select</span>
+              </th>
+            )}
             <th className="px-4 py-2 text-left">Student</th>
             <th className="px-4 py-2 text-left">Subject</th>
             <th className="px-4 py-2 text-left">Confidence</th>
@@ -53,47 +63,68 @@ export default function AutoSentTable({
           </tr>
         </thead>
         <tbody>
-          {emails.map((email) => (
-            <tr
-              key={email.id}
-              className="border-t border-border hover:bg-muted/40"
-            >
-              <td className="px-4 py-2">
-                {email.student_name ?? "Unknown"}
-              </td>
-              <td className="px-4 py-2">{email.subject}</td>
-              <td className="px-4 py-2">
-                <span
-                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                    email.confidence >= 0.8
-                      ? "bg-green-100 text-green-800"
-                      : email.confidence >= 0.6
-                      ? "bg-yellow-100 text-yellow-800"
-                      : "bg-red-100 text-red-800"
-                  }`}
-                >
-                  {(email.confidence * 100).toFixed(0)}%
-                </span>
-              </td>
-              <td className="px-4 py-2">
-                {formatReceivedEastern(email.received_at)}
-              </td>
-              <td className="px-4 py-2 space-x-2">
-                <button
-                  onClick={() => onSelect(email)}
-                  className="px-3 py-1 rounded-md text-xs font-medium bg-gray-200 text-foreground hover:bg-gray-300"
-                >
-                  View
-                </button>
-                <button
-                  onClick={() => onDelete(email.id)}
-                  className="px-3 py-1 rounded-md text-xs font-medium bg-red-600 text-white hover:bg-red-700"
-                >
-                  Delete
-                </button>
-              </td>
-            </tr>
-          ))}
+          {emails.map((email) => {
+            const isSelected = selectedIds.has(email.id);
+
+            return (
+              <tr
+                key={email.id}
+                className={`border-t border-border hover:bg-muted/40 ${
+                  isSelected ? "bg-blue-50" : ""
+                }`}
+              >
+                {onToggleSelect && (
+                  <td className="px-3 py-2">
+                    <button
+                      onClick={() => onToggleSelect(email.id)}
+                      className="p-1 rounded hover:bg-gray-200"
+                      aria-label={isSelected ? "Deselect" : "Select"}
+                    >
+                      {isSelected ? (
+                        <CheckSquare className="h-4 w-4 text-blue-600" />
+                      ) : (
+                        <Square className="h-4 w-4 text-gray-400" />
+                      )}
+                    </button>
+                  </td>
+                )}
+                <td className="px-4 py-2">
+                  {email.student_name ?? "Unknown"}
+                </td>
+                <td className="px-4 py-2">{email.subject}</td>
+                <td className="px-4 py-2">
+                  <span
+                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                      email.confidence >= 0.8
+                        ? "bg-green-100 text-green-800"
+                        : email.confidence >= 0.6
+                        ? "bg-yellow-100 text-yellow-800"
+                        : "bg-red-100 text-red-800"
+                    }`}
+                  >
+                    {(email.confidence * 100).toFixed(0)}%
+                  </span>
+                </td>
+                <td className="px-4 py-2">
+                  {formatReceivedEastern(email.received_at)}
+                </td>
+                <td className="px-4 py-2 space-x-2">
+                  <button
+                    onClick={() => onSelect(email)}
+                    className="px-3 py-1 rounded-md text-xs font-medium bg-gray-200 text-foreground hover:bg-gray-300"
+                  >
+                    View
+                  </button>
+                  <button
+                    onClick={() => onDelete(email.id)}
+                    className="px-3 py-1 rounded-md text-xs font-medium bg-red-600 text-white hover:bg-red-700"
+                  >
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

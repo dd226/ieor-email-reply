@@ -1,10 +1,20 @@
+import os
+import json
+import base64
+from pathlib import Path
 from datetime import datetime, date
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Dict
 
-from fastapi import FastAPI, Query, HTTPException
+import email
+from email.header import decode_header
+from email.utils import parseaddr
+from email.message import EmailMessage
+
+from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, ConfigDict
 
 from email_advising import (
     EmailAdvisor,
@@ -13,7 +23,6 @@ from email_advising import (
     load_reference_corpus,
 )
 
-# --- SQLAlchemy imports for SQLite persistence ---
 from sqlalchemy import (
     create_engine,
     Column,
@@ -24,8 +33,36 @@ from sqlalchemy import (
     Text,
     Enum as SAEnum,
     func,
+    Boolean,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
+
+# Gmail / OAuth
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+
+# =====================================================
+# Paths, constants, app setup
+# =====================================================
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+DATA_DIR.mkdir(exist_ok=True)
+
+CONFIDENCE_THRESHOLD = 0.9  # >= this → auto, else review
+
+# Gmail OAuth configuration
+SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
+CLIENT_SECRETS_FILE = os.getenv(
+    "GOOGLE_OAUTH_CLIENT_FILE",
+    str(DATA_DIR / "google_client_secrets.json"),
+)
+GMAIL_TOKEN_PATH = DATA_DIR / "gmail_token.json"
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+# In-memory store for OAuth flows keyed by state
+oauth_flows: Dict[str, Flow] = {}
 
 # =====================================================
 # FastAPI app + CORS
@@ -35,7 +72,8 @@ app = FastAPI(title="Email Advising System API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -111,7 +149,61 @@ class EmailUpdate(BaseModel):
     suggested_reply: Optional[str] = None
 
 
-# ---------- SQLAlchemy ORM model (DB table) ----------
+class EmailSettings(BaseModel):
+    """
+    Stored in the email_settings table.
+    We still keep the IMAP/SMTP fields for backwards-compat/schema,
+    but the frontend now only really uses auto_* and last_synced_at.
+    """
+    email_address: str
+    imap_server: str
+    imap_port: int
+    smtp_server: str
+    smtp_port: int
+    use_tls: bool
+    auto_send_enabled: bool
+    auto_send_threshold: float  # 0–1
+    last_synced_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EmailSettingsUpdate(BaseModel):
+    """
+    Partial update. The new Settings tab only sends:
+    - auto_send_enabled
+    - auto_send_threshold
+    but we keep the other fields optional for backwards compat.
+    """
+    email_address: Optional[str] = None
+    app_password: Optional[str] = None  # legacy; ignored for OAuth
+    imap_server: Optional[str] = None
+    imap_port: Optional[int] = None
+    smtp_server: Optional[str] = None
+    smtp_port: Optional[int] = None
+    use_tls: Optional[bool] = None
+    auto_send_enabled: Optional[bool] = None
+    auto_send_threshold: Optional[float] = None
+
+
+# ---------- SQLAlchemy ORM model (DB tables) ----------
+
+
+class EmailSettingsORM(Base):
+    __tablename__ = "email_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email_address = Column(String, nullable=False, default="")
+    # app_password kept for backwards compat but not used with OAuth
+    app_password = Column(String, nullable=False, default="")
+    imap_server = Column(String, nullable=False, default="imap.gmail.com")
+    imap_port = Column(Integer, nullable=False, default=993)
+    smtp_server = Column(String, nullable=False, default="smtp.gmail.com")
+    smtp_port = Column(Integer, nullable=False, default=587)
+    use_tls = Column(Boolean, nullable=False, default=True)
+    auto_send_enabled = Column(Boolean, nullable=False, default=False)
+    auto_send_threshold = Column(Float, nullable=False, default=CONFIDENCE_THRESHOLD)
+    last_synced_at = Column(DateTime, nullable=True)
 
 
 class EmailORM(Base):
@@ -131,6 +223,108 @@ class EmailORM(Base):
 # Create tables if they don't exist yet
 Base.metadata.create_all(bind=engine)
 
+# =====================================================
+# Gmail OAuth helpers
+# =====================================================
+
+
+def load_gmail_credentials() -> tuple[Optional[Credentials], Optional[str]]:
+    """
+    Load stored Gmail OAuth credentials (if any).
+    Returns (creds, email_address).
+    """
+    if not GMAIL_TOKEN_PATH.exists():
+        return None, None
+
+    with GMAIL_TOKEN_PATH.open("r") as f:
+        data = json.load(f)
+
+    email_address = data.get("email_address")
+    creds_info = {k: v for k, v in data.items() if k != "email_address"}
+
+    creds = Credentials.from_authorized_user_info(creds_info, SCOPES)
+    return creds, email_address
+
+
+def save_gmail_credentials(creds: Credentials, email_address: str) -> None:
+    """
+    Persist Gmail OAuth credentials + email address to disk.
+    """
+    data = json.loads(creds.to_json())
+    data["email_address"] = email_address
+    GMAIL_TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with GMAIL_TOKEN_PATH.open("w") as f:
+        json.dump(data, f)
+
+
+def get_or_create_settings(db: Session) -> EmailSettingsORM:
+    settings = db.query(EmailSettingsORM).first()
+    if settings is None:
+        settings = EmailSettingsORM(
+            email_address="",
+            app_password="",  # legacy / unused with OAuth
+            imap_server="imap.gmail.com",
+            imap_port=993,
+            smtp_server="smtp.gmail.com",
+            smtp_port=587,
+            use_tls=True,
+            auto_send_enabled=False,
+            auto_send_threshold=CONFIDENCE_THRESHOLD,
+        )
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    return settings
+
+
+def extract_text_from_email(msg: email.message.Message) -> str:
+    """Return the plain-text body from an email.message.Message"""
+    if msg.is_multipart():
+        for part in msg.walk():
+            ctype = part.get_content_type()
+            disp = str(part.get("Content-Disposition") or "")
+            if ctype == "text/plain" and "attachment" not in disp:
+                charset = part.get_content_charset() or "utf-8"
+                try:
+                    return part.get_payload(decode=True).decode(
+                        charset, errors="ignore"
+                    )
+                except Exception:
+                    continue
+        return ""
+    else:
+        charset = msg.get_content_charset() or "utf-8"
+        try:
+            return msg.get_payload(decode=True).decode(charset, errors="ignore")
+        except Exception:
+            return ""
+
+
+def send_email_via_gmail_api(
+    creds: Credentials,
+    from_addr: str,
+    to_addr: str,
+    subject: str,
+    body: str,
+) -> None:
+    """
+    Send email using Gmail API (no SMTP/app password).
+    """
+    msg = EmailMessage()
+    msg["From"] = from_addr
+    msg["To"] = to_addr
+    msg["Subject"] = subject
+    msg.set_content(body)
+
+    raw_bytes = msg.as_bytes()
+    raw_b64 = base64.urlsafe_b64encode(raw_bytes).decode("utf-8")
+
+    service = build("gmail", "v1", credentials=creds)
+    service.users().messages().send(
+        userId="me",
+        body={"raw": raw_b64},
+    ).execute()
+
 
 # ---------- Utility: DB session + conversion ----------
 
@@ -142,24 +336,167 @@ def get_db() -> Session:
         db.close()
 
 
-def orm_to_schema(email: EmailORM) -> Email:
+def orm_to_schema(email_obj: EmailORM) -> Email:
     return Email(
-        id=email.id,
-        student_name=email.student_name,
-        uni=email.uni,
-        subject=email.subject,
-        body=email.body,
-        confidence=email.confidence,
-        status=email.status,
-        suggested_reply=email.suggested_reply,
-        received_at=email.received_at,
+        id=email_obj.id,
+        student_name=email_obj.student_name,
+        uni=email_obj.uni,
+        subject=email_obj.subject,
+        body=email_obj.body,
+        confidence=email_obj.confidence,
+        status=email_obj.status,
+        suggested_reply=email_obj.suggested_reply,
+        received_at=email_obj.received_at,
     )
 
 
-CONFIDENCE_THRESHOLD = 0.9  # >= this → auto, else review
+def settings_orm_to_schema(settings: EmailSettingsORM) -> EmailSettings:
+    """Convert ORM model to Pydantic schema."""
+    return EmailSettings(
+        email_address=settings.email_address,
+        imap_server=settings.imap_server,
+        imap_port=settings.imap_port,
+        smtp_server=settings.smtp_server,
+        smtp_port=settings.smtp_port,
+        use_tls=settings.use_tls,
+        auto_send_enabled=settings.auto_send_enabled,
+        auto_send_threshold=settings.auto_send_threshold,
+        last_synced_at=settings.last_synced_at,
+    )
+
 
 # =====================================================
-# Endpoint: ingest email
+# Email client settings
+# =====================================================
+
+
+@app.get("/email-settings", response_model=EmailSettings)
+def read_email_settings():
+    db = SessionLocal()
+    try:
+        settings = get_or_create_settings(db)
+        return settings_orm_to_schema(settings)
+    finally:
+        db.close()
+
+
+@app.post("/email-settings", response_model=EmailSettings)
+def update_email_settings(payload: EmailSettingsUpdate):
+    db = SessionLocal()
+    try:
+        settings = get_or_create_settings(db)
+        data = payload.model_dump(exclude_unset=True)
+
+        for field, value in data.items():
+            if field == "app_password":
+                # Legacy: ignore or only update if you really want to keep it
+                continue
+            setattr(settings, field, value)
+
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+        return settings_orm_to_schema(settings)
+    finally:
+        db.close()
+
+
+# =====================================================
+# Gmail OAuth endpoints
+# =====================================================
+
+
+@app.get("/gmail/status")
+def gmail_status():
+    """
+    Return whether Gmail is connected, what address, and (optionally) last sync time.
+    Used by Settings tab on load.
+    """
+    db = SessionLocal()
+    try:
+        settings = get_or_create_settings(db)
+        creds, email_address = load_gmail_credentials()
+        connected = bool(creds and creds.valid and email_address)
+
+        # Keep email_settings.email_address in sync with Gmail profile
+        if connected and email_address and settings.email_address != email_address:
+            settings.email_address = email_address
+            db.add(settings)
+            db.commit()
+
+        return {
+            "connected": connected,
+            "email_address": email_address,
+            "last_synced_at": settings.last_synced_at.isoformat()
+            if settings.last_synced_at
+            else None,
+        }
+    finally:
+        db.close()
+
+
+@app.get("/gmail/auth-url")
+def gmail_auth_url():
+    """
+    Create an OAuth flow and return the Google authorization URL.
+    Frontend will redirect the browser to this URL when user clicks "Connect Gmail".
+    """
+    if not Path(CLIENT_SECRETS_FILE).exists():
+        raise HTTPException(
+            status_code=500,
+            detail="Google OAuth client secrets file not found. "
+            "Expected at GOOGLE_OAUTH_CLIENT_FILE or data/google_client_secrets.json",
+        )
+
+    flow = Flow.from_client_secrets_file(
+        CLIENT_SECRETS_FILE,
+        scopes=SCOPES,
+        redirect_uri="http://127.0.0.1:8000/gmail/oauth2callback",
+    )
+
+    # NOTE: include_granted_scopes removed – it was causing the 400 error.
+    auth_url, state = flow.authorization_url(
+        access_type="offline",
+        prompt="consent",
+    )
+
+    oauth_flows[state] = flow
+    return {"auth_url": auth_url}
+
+
+@app.get("/gmail/oauth2callback")
+def gmail_oauth2callback(request: Request, state: str, code: str):
+    """
+    OAuth redirect URI that Google calls with ?state=...&code=...
+    Exchanges code for tokens, stores them, and then redirects user back to the frontend.
+    """
+    flow = oauth_flows.get(state)
+    if not flow:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+
+    # Complete the OAuth flow
+    flow.fetch_token(code=code)
+    creds: Credentials = flow.credentials
+
+    # Use Gmail API to get the user's email address
+    service = build("gmail", "v1", credentials=creds)
+    profile = service.users().getProfile(userId="me").execute()
+    email_address = profile.get("emailAddress")
+
+    if not email_address:
+        raise HTTPException(status_code=400, detail="Unable to determine Gmail address")
+
+    save_gmail_credentials(creds, email_address)
+
+    # Clean up the used state
+    oauth_flows.pop(state, None)
+
+    # Redirect back to the frontend app
+    return RedirectResponse(url=FRONTEND_URL)
+
+
+# =====================================================
+# Endpoint: ingest email (manual)
 # =====================================================
 
 
@@ -185,7 +522,11 @@ def ingest_email(email_in: EmailIn):
     suggested_reply = result.body
 
     # Simple policy: high confidence => auto, otherwise => review
-    status = EmailStatus.auto if confidence >= CONFIDENCE_THRESHOLD else EmailStatus.review
+    status = (
+        EmailStatus.auto
+        if confidence >= CONFIDENCE_THRESHOLD
+        else EmailStatus.review
+    )
 
     db = SessionLocal()
     try:
@@ -205,6 +546,169 @@ def ingest_email(email_in: EmailIn):
         return orm_to_schema(email_obj)
     finally:
         db.close()
+
+
+# =====================================================
+# Endpoint: sync emails from Gmail (OAuth)
+# =====================================================
+
+
+@app.post("/emails/sync")
+def sync_emails(limit: int = 20):
+    """
+    Use Gmail API (OAuth) to pull unread emails, run them through the advisor,
+    store them in SQLite, and optionally auto-send replies.
+    """
+    db = SessionLocal()
+    try:
+        settings = get_or_create_settings(db)
+        creds, gmail_address = load_gmail_credentials()
+        if not creds or not creds.valid:
+            raise HTTPException(
+                status_code=400,
+                detail="Gmail is not connected. Use /gmail/auth-url via the Settings tab.",
+            )
+
+        service = build("gmail", "v1", credentials=creds)
+
+        # Pull unread messages
+        res = (
+            service.users()
+            .messages()
+            .list(userId="me", q="is:unread", maxResults=limit)
+            .execute()
+        )
+        messages = res.get("messages", [])
+
+        ingested = 0
+        auto_sent = 0
+        threshold = settings.auto_send_threshold or CONFIDENCE_THRESHOLD
+
+        for m in messages:
+            msg_id = m["id"]
+            msg_data = (
+                service.users()
+                .messages()
+                .get(userId="me", id=msg_id, format="raw")
+                .execute()
+            )
+
+            raw_b64 = msg_data["raw"]
+            raw_bytes = base64.urlsafe_b64decode(raw_b64.encode("utf-8"))
+            msg = email.message_from_bytes(raw_bytes)
+
+            raw_subject = msg.get("Subject", "")
+            decoded = decode_header(raw_subject)[0]
+            subject, enc = decoded
+            if isinstance(subject, bytes):
+                subject = subject.decode(enc or "utf-8", errors="ignore")
+
+            from_name, from_addr = parseaddr(msg.get("From", ""))
+
+            body = extract_text_from_email(msg)
+            if not body.strip():
+                # Mark as read but skip storing empty messages
+                service.users().messages().modify(
+                    userId="me",
+                    id=msg_id,
+                    body={"removeLabelIds": ["UNREAD"]},
+                ).execute()
+                continue
+
+            # Naive duplicate check (subject + body)
+            existing = (
+                db.query(EmailORM)
+                .filter(EmailORM.subject == subject, EmailORM.body == body)
+                .first()
+            )
+            if existing:
+                # Still mark as read
+                service.users().messages().modify(
+                    userId="me",
+                    id=msg_id,
+                    body={"removeLabelIds": ["UNREAD"]},
+                ).execute()
+                continue
+
+            result = advisor.process_query(
+                body,
+                {"student_name": from_name},
+            )
+            confidence = float(result.confidence or 0.0)
+            suggested_reply = result.body
+
+            status_enum = (
+                EmailStatus.auto if confidence >= threshold else EmailStatus.review
+            )
+
+            email_obj = EmailORM(
+                student_name=from_name or from_addr,
+                uni=None,
+                subject=subject or "(no subject)",
+                body=body,
+                confidence=confidence,
+                status=status_enum,
+                suggested_reply=suggested_reply,
+                received_at=datetime.utcnow(),
+            )
+            db.add(email_obj)
+            db.commit()
+            db.refresh(email_obj)
+            ingested += 1
+
+            # Optional auto-send via Gmail API
+            if (
+                status_enum == EmailStatus.auto
+                and settings.auto_send_enabled
+                and from_addr
+            ):
+                try:
+                    send_email_via_gmail_api(
+                        creds=creds,
+                        from_addr=gmail_address or settings.email_address or from_addr,
+                        to_addr=from_addr,
+                        subject=email_obj.subject,
+                        body=email_obj.suggested_reply,
+                    )
+                    auto_sent += 1
+                except Exception as exc:
+                    print("Failed to auto-send reply:", exc)
+
+            # Mark the original message as read
+            service.users().messages().modify(
+                userId="me",
+                id=msg_id,
+                body={"removeLabelIds": ["UNREAD"]},
+            ).execute()
+
+        settings.last_synced_at = datetime.utcnow()
+        db.add(settings)
+        db.commit()
+
+        return {
+            "ingested": ingested,
+            "auto_sent": auto_sent,
+            "last_synced_at": settings.last_synced_at.isoformat()
+            if settings.last_synced_at
+            else None,
+        }
+    finally:
+        db.close()
+
+
+@app.post("/gmail/disconnect")
+def gmail_disconnect():
+    """
+    Deletes stored Gmail OAuth credentials locally.
+    Does NOT revoke on Google's side (optional), but removes access for our app.
+    """
+    if GMAIL_TOKEN_PATH.exists():
+        try:
+            GMAIL_TOKEN_PATH.unlink()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    return {"ok": True}
 
 
 # =====================================================
@@ -254,7 +758,7 @@ def update_email(email_id: int, update: EmailUpdate):
         if email_obj is None:
             raise HTTPException(status_code=404, detail="Email not found")
 
-        data = update.dict(exclude_unset=True)
+        data = update.model_dump(exclude_unset=True)
         for field, value in data.items():
             setattr(email_obj, field, value)
 
@@ -311,9 +815,11 @@ def respond(
         "confidence": result.confidence,
     }
 
+
 # =====================================================
 # Endpoint: metrics (REAL data from DB)
 # =====================================================
+
 
 @app.get("/metrics")
 def metrics():
@@ -369,8 +875,8 @@ def metrics():
             "emails_today": int(emails_today),
             "auto_count": int(auto_count),
             "review_count": int(review_count),
-            "avg_confidence": float(avg_conf),          # NEW: all emails
-            "avg_auto_confidence": float(avg_auto_conf) # kept for other views if needed
+            "avg_confidence": float(avg_conf),
+            "avg_auto_confidence": float(avg_auto_conf),
         }
     finally:
         db.close()
