@@ -10,12 +10,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { format } from "date-fns";
 import { useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 
+const BACKEND_URL = "http://127.0.0.1:8000";
+
 // ---------------------
-// Auto-send threshold
+// Shared auto-send threshold (used by other tabs)
 // ---------------------
 const CONFIDENCE_THRESHOLD_KEY = "confidenceThresholdPct";
 const DEFAULT_CONFIDENCE_THRESHOLD_PCT = 92;
@@ -50,7 +53,7 @@ type UploadItem = {
 
 // ---------------------
 // Email templates
-// ---------------------
+// ------------------
 const TEMPLATES_KEY = "emailTemplates";
 
 type EmailTemplate = {
@@ -65,32 +68,37 @@ const DEFAULT_TEMPLATES: EmailTemplate[] = [
     id: "course-withdrawal",
     name: "Course Withdrawal",
     body:
-      "Hello {student_name},\n\nTo withdraw from a course after the add/drop period, please submit the Course Withdrawal form located in the Records and Registration section of the student portal. The form requires signatures from both you and the course instructor. Once approved, the Registrar will record a grade of 'W'.\n\nBest,\nAcademic Advising Team",
+      "Hello {student_name},\n\nTo withdraw from a course after the drop deadline, you'll need to submit a Course Withdrawal form via Student Services Online (SSOL) and speak with an academic advisor. Please be aware that a withdrawal may impact your financial aid, visa status (if applicable), and time to degree completion.\n\nOnce processed, your transcript will record a grade of 'W'.\n\nBest,\nAcademic Advising Team",
     uses: 24,
   },
   {
     id: "financial-aid-inquiry",
     name: "Financial Aid Inquiry",
     body:
-      "Hello {student_name},\n\nFor questions about your financial aid status, please visit the Financial Aid Status page to review outstanding checklist items, disbursement dates, and award details. If something looks incorrect, you can contact the Financial Aid Office at finaid@university.edu.\n\nBest,\nAcademic Advising Team",
+      "Hello {student_name},\n\nFor questions about your financial aid status, package, or disbursement, the best resource is the Financial Aid Office. You can review your current aid information in NetPartner and schedule an appointment with a financial aid counselor through their website.\n\nIf your question also affects course planning or enrollment, feel free to follow up with us so we can coordinate with Financial Aid on your behalf.\n\nBest,\nAcademic Advising Team",
     uses: 18,
   },
   {
     id: "grade-appeal",
     name: "Grade Appeal",
     body:
-      "Hello {student_name},\n\nIf you believe there is an error with your final grade, we first recommend contacting your instructor to discuss the grading breakdown. If further review is needed, you may follow the department’s formal grade appeal process, which is outlined on the Academic Policies page.\n\nBest,\nAcademic Advising Team",
+      "Hello {student_name},\n\nIf you believe there is an error in your final course grade, the first step is to contact your instructor directly to request clarification. If, after speaking with the instructor, you still feel the grade is inaccurate, you may follow the department's formal grade appeal process.\n\nPolicies and timelines for appeals can be found on the Academic Policies page.\n\nBest,\nAcademic Advising Team",
     uses: 12,
   },
 ];
 
-export default function SettingsTab() {
-  // Threshold state
-  const [thresholdPct, setThresholdPct] = useState(
-    DEFAULT_CONFIDENCE_THRESHOLD_PCT,
-  );
-  const [savedPct, setSavedPct] = useState<number | null>(null);
+// ---------------------
+// Email client (Gmail API via OAuth) settings
+// ---------------------
+type EmailSettingsState = {
+  auto_send_enabled: boolean;
+  auto_send_threshold: number; // percent 0–100 (shared with other tabs)
+  last_synced_at: string | null;
+  gmail_connected: boolean;
+  gmail_address: string | null;
+};
 
+export default function SettingsTab() {
   // Profile state
   const [profile, setProfile] = useState<AdvisorProfile>(DEFAULT_PROFILE);
   const [profileDirty, setProfileDirty] = useState(false);
@@ -107,38 +115,53 @@ export default function SettingsTab() {
   const [editName, setEditName] = useState("");
   const [editBody, setEditBody] = useState("");
 
+  // Email client / Gmail OAuth settings
+  const [emailSettings, setEmailSettings] = useState<EmailSettingsState>({
+    auto_send_enabled: false,
+    auto_send_threshold: DEFAULT_CONFIDENCE_THRESHOLD_PCT,
+    last_synced_at: null,
+    gmail_connected: false,
+    gmail_address: null,
+  });
+  const [savingEmailSettings, setSavingEmailSettings] = useState(false);
+  const [syncingInbox, setSyncingInbox] = useState(false);
+  const [emailSettingsError, setEmailSettingsError] = useState<string | null>(
+    null,
+  );
+  const [settingsSaved, setSettingsSaved] = useState(false);
+
   // ---------------------
-  // Load everything on mount
+  // Load all settings on mount
   // ---------------------
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // Load threshold
-    const stored = window.localStorage.getItem(CONFIDENCE_THRESHOLD_KEY);
-    if (stored) {
-      const value = Number(stored);
+    // Shared auto-send threshold used by other tabs
+    const storedThreshold = window.localStorage.getItem(
+      CONFIDENCE_THRESHOLD_KEY,
+    );
+    let thresholdPct = DEFAULT_CONFIDENCE_THRESHOLD_PCT;
+    if (storedThreshold) {
+      const value = Number(storedThreshold);
       if (!Number.isNaN(value)) {
-        setThresholdPct(value);
-        setSavedPct(value);
+        thresholdPct = value;
       }
     }
 
-    // Load advisor profile
+    // Load profile
     const storedProfile = window.localStorage.getItem(PROFILE_KEY);
     if (storedProfile) {
       try {
-        const parsed = JSON.parse(storedProfile) as Partial<AdvisorProfile>;
-        setProfile({
-          name: parsed.name ?? DEFAULT_PROFILE.name,
-          email: parsed.email ?? DEFAULT_PROFILE.email,
-          department: parsed.department ?? DEFAULT_PROFILE.department,
-        });
+        const parsed = JSON.parse(storedProfile) as AdvisorProfile;
+        setProfile(parsed);
       } catch {
-        console.error("Invalid stored advisor profile");
+        setProfile(DEFAULT_PROFILE);
       }
+    } else {
+      setProfile(DEFAULT_PROFILE);
     }
 
-    // Load knowledge base uploads
+    // Load KB uploads
     const storedUploads = window.localStorage.getItem(KB_UPLOADS_KEY);
     if (storedUploads) {
       try {
@@ -166,33 +189,68 @@ export default function SettingsTab() {
     } else {
       setTemplates(DEFAULT_TEMPLATES);
     }
+
+    // Load email settings (auto-send + threshold) best-effort
+    fetch(`${BACKEND_URL}/email-settings`)
+      .then((res) => {
+        if (!res.ok) return;
+        return res.json();
+      })
+      .then((data) => {
+        if (!data) {
+          setEmailSettings((prev) => ({
+            ...prev,
+            auto_send_threshold: thresholdPct,
+          }));
+          return;
+        }
+        setEmailSettings((prev) => ({
+          ...prev,
+          auto_send_enabled:
+            typeof data.auto_send_enabled === "boolean"
+              ? data.auto_send_enabled
+              : prev.auto_send_enabled,
+          auto_send_threshold:
+            typeof data.auto_send_threshold === "number"
+              ? Math.round(data.auto_send_threshold * 100)
+              : thresholdPct,
+          last_synced_at: data.last_synced_at ?? prev.last_synced_at,
+        }));
+      })
+      .catch(() => {
+        setEmailSettings((prev) => ({
+          ...prev,
+          auto_send_threshold: thresholdPct,
+        }));
+      });
+
+    // Load Gmail connection status (OAuth)
+    fetch(`${BACKEND_URL}/gmail/status`)
+      .then((res) => {
+        if (!res.ok) return;
+        return res.json();
+      })
+      .then((data) => {
+        if (!data) return;
+        setEmailSettings((prev) => ({
+          ...prev,
+          gmail_connected: !!data.connected,
+          gmail_address: data.email_address ?? null,
+          last_synced_at: data.last_synced_at ?? prev.last_synced_at,
+        }));
+      })
+      .catch(() => {
+        // If this fails, just treat as "not connected"
+      });
   }, []);
-
-  // ---------------------
-  // Threshold interactions
-  // ---------------------
-  function handleSliderChange(value: number[]) {
-    if (!value || value.length === 0) return;
-    setThresholdPct(value[0]);
-  }
-
-  function handleSaveThreshold() {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(CONFIDENCE_THRESHOLD_KEY, String(thresholdPct));
-    setSavedPct(thresholdPct);
-  }
-
-  const hasUnsavedChanges =
-    savedPct === null
-      ? thresholdPct !== DEFAULT_CONFIDENCE_THRESHOLD_PCT
-      : savedPct !== thresholdPct;
 
   // ---------------------
   // Profile interactions
   // ---------------------
-  function updateField(field: keyof AdvisorProfile) {
+  function updateField<K extends keyof AdvisorProfile>(key: K) {
     return (e: React.ChangeEvent<HTMLInputElement>) => {
-      setProfile({ ...profile, [field]: e.target.value });
+      const next = { ...profile, [key]: e.target.value };
+      setProfile(next);
       setProfileDirty(true);
     };
   }
@@ -212,38 +270,29 @@ export default function SettingsTab() {
   // ---------------------
   // Knowledge Base interactions
   // ---------------------
-  function persistUploads(newUploads: UploadItem[]) {
-    setUploads(newUploads);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(KB_UPLOADS_KEY, JSON.stringify(newUploads));
-    }
+  function persistUploads(next: UploadItem[]) {
+    setUploads(next);
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(KB_UPLOADS_KEY, JSON.stringify(next));
   }
 
   function handleFilesSelected(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
 
-    const allowedExtensions = ["pdf", "docx", "txt"];
-    const maxSizeBytes = 10 * 1024 * 1024;
     const now = new Date();
-
     const newItems: UploadItem[] = [];
     let errorMsg: string | null = null;
 
     Array.from(fileList).forEach((file) => {
       const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-      if (!allowedExtensions.includes(ext)) {
-        errorMsg = "Only PDF, DOCX, and TXT files are allowed.";
-        return;
-      }
-      if (file.size > maxSizeBytes) {
-        errorMsg = "Each file must be 10MB or smaller.";
+      if (ext !== "json" && ext !== "txt" && ext !== "md" && ext !== "pdf") {
+        errorMsg =
+          "Only .json, .txt, .md, or .pdf files are currently supported.";
         return;
       }
 
       newItems.push({
-        id: `${now.getTime()}-${file.name}-${Math.random()
-          .toString(36)
-          .slice(2)}`,
+        id: `${now.getTime()}-${Math.random().toString(36).slice(2)}`,
         name: file.name,
         uploadedAt: now.toISOString(),
       });
@@ -271,22 +320,21 @@ export default function SettingsTab() {
   function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     e.stopPropagation();
-    if (!isDragging) setIsDragging(true);
+    if (!isDragging) {
+      setIsDragging(true);
+    }
   }
 
   function handleDragLeave(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragging(false);
+    if (isDragging) {
+      setIsDragging(false);
+    }
   }
 
-  function handleClickDropzone() {
-    fileInputRef.current?.click();
-  }
-
-  function handleDeleteUpload(id: string) {
-    const next = uploads.filter((u) => u.id !== id);
-    persistUploads(next);
+  function handleClearUploads() {
+    persistUploads([]);
   }
 
   // ---------------------
@@ -294,9 +342,8 @@ export default function SettingsTab() {
   // ---------------------
   function persistTemplates(next: EmailTemplate[]) {
     setTemplates(next);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(TEMPLATES_KEY, JSON.stringify(next));
-    }
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(TEMPLATES_KEY, JSON.stringify(next));
   }
 
   function startEditingTemplate(template: EmailTemplate) {
@@ -313,25 +360,19 @@ export default function SettingsTab() {
 
   function saveEditingTemplate() {
     if (!editingId) return;
-
-    const trimmedName = editName.trim();
-    if (!trimmedName) return;
-
     const next = templates.map((t) =>
-      t.id === editingId ? { ...t, name: trimmedName, body: editBody } : t,
+      t.id === editingId ? { ...t, name: editName, body: editBody } : t,
     );
     persistTemplates(next);
     cancelEditingTemplate();
   }
 
   function handleAddTemplate() {
-    const id = `template-${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2)}`;
     const newTemplate: EmailTemplate = {
-      id,
-      name: "New template",
-      body: "",
+      id: `template-${Date.now().toString(36)}`,
+      name: "New Template",
+      body:
+        "Hello {student_name},\n\nThank you for reaching out. [Add your response here.]\n\nBest,\nAcademic Advising Team",
       uses: 0,
     };
     const next = [newTemplate, ...templates];
@@ -347,6 +388,142 @@ export default function SettingsTab() {
     }
   }
 
+  // ---------------------
+  // Email Client settings interactions (Gmail OAuth)
+  // ---------------------
+  
+  function updateEmailSettings<K extends keyof EmailSettingsState>(
+    key: K,
+    value: EmailSettingsState[K],
+  ) {
+    setEmailSettings((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function handleSaveEmailSettings() {
+  setSavingEmailSettings(true);
+  setEmailSettingsError(null);
+  setSettingsSaved(false);
+
+  // Always save threshold locally so other tabs (Dashboard / Emails) see it
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(
+      CONFIDENCE_THRESHOLD_KEY,
+      String(emailSettings.auto_send_threshold),
+    );
+  }
+
+  try {
+    const payload: any = {
+      auto_send_enabled: emailSettings.auto_send_enabled,
+      auto_send_threshold: emailSettings.auto_send_threshold / 100,
+    };
+
+    const res = await fetch(`${BACKEND_URL}/email-settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      setEmailSettings((prev) => ({
+        ...prev,
+        auto_send_enabled:
+          typeof data.auto_send_enabled === "boolean"
+            ? data.auto_send_enabled
+            : prev.auto_send_enabled,
+        auto_send_threshold:
+          typeof data.auto_send_threshold === "number"
+            ? Math.round(data.auto_send_threshold * 100)
+            : prev.auto_send_threshold,
+        last_synced_at: data.last_synced_at ?? prev.last_synced_at,
+      }));
+    } else {
+      // Backend responded but not 2xx – log and move on
+      const text = await res.text();
+      console.error("Failed to update /email-settings:", text);
+    }
+  } catch (err) {
+    // Network / CORS / browser weirdness – don't spam the UI
+    console.error("Error calling /email-settings:", err);
+  } finally {
+    setSavingEmailSettings(false);
+    setSettingsSaved(true);
+    setTimeout(() => setSettingsSaved(false), 2000);
+  }
+}
+
+  async function handleSyncInbox() {
+    setSyncingInbox(true);
+    setEmailSettingsError(null);
+    try {
+      const res = await fetch(`${BACKEND_URL}/emails/sync`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to sync inbox");
+      }
+      const data = await res.json();
+      setEmailSettings((prev) => ({
+        ...prev,
+        last_synced_at:
+          data.last_synced_at ?? new Date().toISOString(),
+      }));
+    } catch (err: any) {
+      setEmailSettingsError(err.message ?? "Unable to sync inbox");
+    } finally {
+      setSyncingInbox(false);
+    }
+  }
+
+  async function handleConnectGmail() {
+    setEmailSettingsError(null);
+    try {
+      const res = await fetch(`${BACKEND_URL}/gmail/auth-url`);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to start Gmail connection");
+      }
+      const data = await res.json();
+      if (data.auth_url) {
+        // Redirect to Google's OAuth consent screen
+        window.location.href = data.auth_url;
+      } else {
+        throw new Error("auth_url missing from backend response");
+      }
+    } catch (err: any) {
+      setEmailSettingsError(
+        err?.message ?? "Unable to open Gmail authorization",
+      );
+    }
+  }
+
+  async function handleDisconnectGmail() {
+    setEmailSettingsError(null);
+    try {
+      const res = await fetch(`${BACKEND_URL}/gmail/disconnect`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to disconnect Gmail");
+      }
+      // Clear local Gmail status
+      setEmailSettings((prev) => ({
+        ...prev,
+        gmail_connected: false,
+        gmail_address: null,
+        last_synced_at: null,
+      }));
+    } catch (err: any) {
+      setEmailSettingsError(err?.message ?? "Unable to disconnect Gmail");
+    }
+  }
+
+  // ---------------------
+  // Render
+  // ---------------------
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -357,46 +534,135 @@ export default function SettingsTab() {
         </p>
       </div>
 
-      {/* Main settings grid: 2x2 on md+ */}
+      {/* 4 cards in a 2x2 layout on md+ */}
       <div className="grid gap-6 md:grid-cols-2">
-        {/* Auto-Send Threshold */}
+        {/* Email Client Integration (Gmail OAuth + auto-send threshold) */}
         <Card>
-          <CardHeader>
-            <CardTitle>Auto-Send Threshold</CardTitle>
-            <CardDescription>
-              Emails with confidence above this level will be treated as high
-              confidence.
-            </CardDescription>
+          <CardHeader className="flex flex-row items-start justify-between">
+            <div>
+              <CardTitle>Email Client Integration</CardTitle>
+              <CardDescription>
+                Connect a Gmail inbox via OAuth and control auto-send behavior.
+              </CardDescription>
+            </div>
+            {settingsSaved && (
+              <span className="text-xs font-semibold text-green-600">
+                Settings saved
+              </span>
+            )}
           </CardHeader>
           <CardContent className="space-y-4">
+            {emailSettingsError && (
+              <p className="text-xs text-red-600 whitespace-pre-line">
+                {emailSettingsError}
+              </p>
+            )}
+
+            <div className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-2">
+              <div>
+                <p className="text-sm font-medium">
+                  {emailSettings.gmail_connected
+                    ? "Connected to Gmail"
+                    : "Not connected to Gmail"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {emailSettings.gmail_connected
+                    ? emailSettings.gmail_address || "Gmail account connected"
+                    : "Use your Google account to authorize access via OAuth."}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant={emailSettings.gmail_connected ? "outline" : "default"}
+                  className={
+                    emailSettings.gmail_connected
+                      ? ""
+                      : "bg-blue-600 hover:bg-blue-700"
+                  }
+                  onClick={handleConnectGmail}
+                >
+                  {emailSettings.gmail_connected ? "Reconnect" : "Connect Gmail"}
+                </Button>
+                {emailSettings.gmail_connected && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                    onClick={handleDisconnectGmail}
+                  >
+                    Disconnect
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Auto-send replies</p>
+                <p className="text-xs text-muted-foreground">
+                  When enabled, high-confidence replies will be sent
+                  automatically from the connected Gmail account.
+                </p>
+              </div>
+              <Switch
+                checked={emailSettings.auto_send_enabled}
+                onCheckedChange={(checked) =>
+                  updateEmailSettings("auto_send_enabled", checked)
+                }
+              />
+            </div>
+
             <div>
-              <div className="flex items-center justify-between mb-4">
-                <label className="text-sm font-medium text-foreground">
-                  Confidence Threshold
-                </label>
-                <span className="text-2xl font-bold text-blue-600">
-                  {thresholdPct}%
+              <label className="text-sm font-medium">
+                Auto-send confidence threshold
+              </label>
+              <div className="mt-2 flex items-center gap-3">
+                <Slider
+                  value={[emailSettings.auto_send_threshold]}
+                  onValueChange={([v]) =>
+                    updateEmailSettings("auto_send_threshold", v)
+                  }
+                  max={100}
+                  min={50}
+                  step={1}
+                />
+                <span className="text-sm font-semibold text-blue-600">
+                  {emailSettings.auto_send_threshold}%
                 </span>
               </div>
-              <Slider
-                value={[thresholdPct]}
-                onValueChange={handleSliderChange}
-                max={100}
-                min={50}
-                step={1}
-              />
-              <p className="text-xs text-muted-foreground mt-2">
-                High Confidence = ≥ {thresholdPct}%. Low Confidence =
-                &nbsp;&lt; {thresholdPct}%.
+              <p className="text-xs text-muted-foreground mt-1">
+                Shared with other tabs. Emails with confidence ≥ this percentage
+                can be auto-sent.
               </p>
             </div>
-            <Button
-              className="bg-blue-600 hover:bg-blue-700"
-              onClick={handleSaveThreshold}
-              disabled={!hasUnsavedChanges}
-            >
-              {hasUnsavedChanges ? "Save Threshold" : "Threshold Saved"}
-            </Button>
+
+            <div className="flex items-center justify-between gap-3 pt-2">
+              <div className="text-xs text-muted-foreground">
+                Last synced:{" "}
+                {emailSettings.last_synced_at
+                  ? format(
+                      new Date(emailSettings.last_synced_at),
+                      "MMM d, yyyy h:mm a",
+                    )
+                  : "Never"}
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  className="bg-blue-600 hover:bg-blue-700"
+                  onClick={handleSaveEmailSettings}
+                  disabled={savingEmailSettings}
+                >
+                  {savingEmailSettings ? "Saving..." : "Save Settings"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleSyncInbox}
+                  disabled={syncingInbox || !emailSettings.gmail_connected}
+                >
+                  {syncingInbox ? "Syncing..." : "Sync Inbox Now"}
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -418,10 +684,10 @@ export default function SettingsTab() {
                       {template.name}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {template.uses} uses this month
+                      Used {template.uses} times
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex gap-2">
                     <Button
                       size="sm"
                       variant="outline"
@@ -480,7 +746,7 @@ export default function SettingsTab() {
                     body.
                   </p>
                 </div>
-                <div className="flex justify-end gap-2">
+                <div className="flex gap-2 justify-end">
                   <Button
                     variant="outline"
                     size="sm"
@@ -489,56 +755,67 @@ export default function SettingsTab() {
                     Cancel
                   </Button>
                   <Button size="sm" onClick={saveEditingTemplate}>
-                    Save Template
+                    Save
                   </Button>
                 </div>
               </div>
             )}
 
-            <Button
-              className="bg-blue-600 hover:bg-blue-700 w-full"
-              onClick={handleAddTemplate}
-            >
-              Add New Template
-            </Button>
+            {!editingId && (
+              <Button
+                className="bg-blue-600 hover:bg-blue-700"
+                variant="default"
+                onClick={handleAddTemplate}
+              >
+                Add Template
+              </Button>
+            )}
           </CardContent>
         </Card>
 
-        {/* Knowledge Base */}
+        {/* Knowledge Base Uploads */}
         <Card>
           <CardHeader>
             <CardTitle>Knowledge Base</CardTitle>
-            <CardDescription>Upload policies and documents</CardDescription>
+            <CardDescription>
+              Track which knowledge base files are currently in use.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Hidden input */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="hidden"
-              multiple
-              accept=".pdf,.docx,.txt"
-              onChange={(e) => handleFilesSelected(e.target.files)}
-            />
-
-            {/* Dropzone */}
             <div
-              className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+              className={`border-2 border-dashed rounded-lg p-4 text-center text-sm transition-colors ${
                 isDragging
-                  ? "border-blue-400 bg-blue-50/60"
-                  : "border-border hover:bg-gray-50"
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-border bg-muted/40"
               }`}
-              onClick={handleClickDropzone}
+              onDrop={handleDrop}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
+              onDragEnd={handleDragLeave}
             >
-              <p className="text-sm font-medium text-foreground">
-                Drop files here or click to upload
+              <p className="font-medium">
+                Drag and drop files here to update the knowledge base
               </p>
               <p className="text-xs text-muted-foreground mt-1">
-                PDF, DOCX, TXT up to 10MB
+                JSON, TXT, MD, or PDF files. This is a visual tracker only; file
+                content is managed separately.
               </p>
+              <div className="mt-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  Choose Files
+                </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => handleFilesSelected(e.target.files)}
+                />
+              </div>
             </div>
 
             {uploadError && (
@@ -546,49 +823,48 @@ export default function SettingsTab() {
             )}
 
             <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase">
-                Recent Uploads ({uploads.length})
-              </p>
-
-              {uploads.length === 0 && (
+              {uploads.length > 0 ? (
+                uploads.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between p-2 rounded-md bg-gray-50"
+                  >
+                    <div>
+                      <p className="text-sm font-medium">{item.name}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Uploaded{" "}
+                        {format(new Date(item.uploadedAt), "MMM d, yyyy h:mm a")}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              ) : (
                 <p className="text-xs text-muted-foreground">
-                  No files uploaded yet.
+                  No recent knowledge base uploads tracked yet.
                 </p>
               )}
-
-              {uploads.map((file) => (
-                <div
-                  key={file.id}
-                  className="flex items-center justify-between bg-gray-50 p-2 rounded"
-                >
-                  <div className="text-xs text-foreground truncate">
-                    {file.name}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
-                      {format(new Date(file.uploadedAt), "MMM d, yyyy")}
-                    </span>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7 text-muted-foreground"
-                      onClick={() => handleDeleteUpload(file.id)}
-                      aria-label={`Delete ${file.name}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
             </div>
+
+            {uploads.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs"
+                onClick={handleClearUploads}
+              >
+                Clear Upload History
+              </Button>
+            )}
           </CardContent>
         </Card>
 
-        {/* Account Settings */}
+        {/* Advisor Profile */}
         <Card>
           <CardHeader>
-            <CardTitle>Account Settings</CardTitle>
-            <CardDescription>Manage your advisor profile</CardDescription>
+            <CardTitle>Advisor Profile</CardTitle>
+            <CardDescription>
+              This information is shown in signatures and in the app header.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>

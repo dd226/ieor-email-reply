@@ -12,6 +12,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { Clock, AlertTriangle } from "lucide-react";
 
 const BACKEND_URL = "http://127.0.0.1:8000";
 
@@ -137,11 +138,23 @@ export default function MetricsCards() {
     const today = new Date();
     const weeks: ChartPoint[] = [];
 
+    // Normalize "today" to the start of the day so week buckets are stable
+    const normalizedToday = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate()
+    );
+
     for (let w = 3; w >= 0; w--) {
-      const start = new Date(today);
-      start.setDate(today.getDate() - 7 * w);
-      const end = new Date(start);
-      end.setDate(start.getDate() + 7);
+      // End of the week bucket (inclusive): today, 7 days ago, 14 days ago, etc.
+      const end = new Date(normalizedToday);
+      end.setDate(end.getDate() - 7 * w);
+      end.setHours(23, 59, 59, 999);
+
+      // Start of the week bucket: 6 days before "end"
+      const start = new Date(end);
+      start.setDate(start.getDate() - 6);
+      start.setHours(0, 0, 0, 0);
 
       const label =
         w === 0
@@ -152,7 +165,7 @@ export default function MetricsCards() {
 
       const count = sourceEmails.filter((e) => {
         const t = new Date(e.received_at);
-        return t >= start && t < end;
+        return t >= start && t <= end;
       }).length;
 
       weeks.push({ date: label, count });
@@ -204,23 +217,23 @@ export default function MetricsCards() {
         )
       : chartData;
 
+  // Helper: parse received_at timestamp
+  const parseReceivedAt = (received_at: string): Date | null => {
+    if (!received_at) return null;
+
+    const iso =
+      received_at.endsWith("Z") || received_at.includes("+")
+        ? received_at
+        : received_at + "Z";
+
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return null;
+    return d;
+  };
+
+  // Calculate oldest pending email
   const oldestPendingLabel = (() => {
     if (reviewEmails.length === 0) return "No emails pending review";
-
-    // Helper: treat timestamps as UTC if they don't have explicit timezone info,
-    // same as in ManualReviewTable.
-    const parseReceivedAt = (received_at: string): Date | null => {
-      if (!received_at) return null;
-
-      const iso =
-        received_at.endsWith("Z") || received_at.includes("+")
-          ? received_at
-          : received_at + "Z";
-
-      const d = new Date(iso);
-      if (isNaN(d.getTime())) return null;
-      return d;
-    };
 
     const dates = reviewEmails
       .map((e) => parseReceivedAt(e.received_at))
@@ -252,11 +265,104 @@ export default function MetricsCards() {
     return `${diffDays} day${diffDays === 1 ? "" : "s"} ago`;
   })();
 
+  // Calculate average wait time for pending emails
+  const avgWaitTimeData = (() => {
+    if (reviewEmails.length === 0) {
+      return { label: "—", minutes: 0, urgency: "none" as const };
+    }
+
+    const now = new Date();
+    let totalMinutes = 0;
+    let count = 0;
+
+    for (const email of reviewEmails) {
+      const received = parseReceivedAt(email.received_at);
+      if (!received) continue;
+
+      let diffMs = now.getTime() - received.getTime();
+      if (diffMs < 0) diffMs = 0;
+      totalMinutes += Math.floor(diffMs / 60000);
+      count++;
+    }
+
+    if (count === 0) return { label: "—", minutes: 0, urgency: "none" as const };
+
+    const avgMinutes = Math.round(totalMinutes / count);
+    const avgHours = Math.floor(avgMinutes / 60);
+    const avgDays = Math.floor(avgHours / 24);
+
+    let label: string;
+    if (avgMinutes < 1) {
+      label = "< 1m";
+    } else if (avgMinutes < 60) {
+      label = `${avgMinutes}m`;
+    } else if (avgHours < 24) {
+      const mins = avgMinutes % 60;
+      label = mins > 0 ? `${avgHours}h ${mins}m` : `${avgHours}h`;
+    } else {
+      const hours = avgHours % 24;
+      label = hours > 0 ? `${avgDays}d ${hours}h` : `${avgDays}d`;
+    }
+
+    // Determine urgency
+    let urgency: "low" | "medium" | "high" | "critical";
+    if (avgHours < 4) {
+      urgency = "low";
+    } else if (avgHours < 12) {
+      urgency = "medium";
+    } else if (avgHours < 24) {
+      urgency = "high";
+    } else {
+      urgency = "critical";
+    }
+
+    return { label, minutes: avgMinutes, urgency };
+  })();
+
+  // Get wait time styling
+  const getWaitTimeColor = (urgency: string) => {
+    switch (urgency) {
+      case "low":
+        return "text-green-600";
+      case "medium":
+        return "text-yellow-600";
+      case "high":
+        return "text-orange-600";
+      case "critical":
+        return "text-red-600";
+      default:
+        return "text-gray-600";
+    }
+  };
+
+  const getWaitTimeBgColor = (urgency: string) => {
+    switch (urgency) {
+      case "low":
+        return "bg-green-100 border-green-200";
+      case "medium":
+        return "bg-yellow-100 border-yellow-200";
+      case "high":
+        return "bg-orange-100 border-orange-200";
+      case "critical":
+        return "bg-red-100 border-red-200";
+      default:
+        return "bg-gray-100 border-gray-200";
+    }
+  };
+
+  // Count urgent emails (waiting > 12 hours)
+  const urgentCount = reviewEmails.filter((email) => {
+    const received = parseReceivedAt(email.received_at);
+    if (!received) return false;
+    const diffHours = (new Date().getTime() - received.getTime()) / (1000 * 60 * 60);
+    return diffHours >= 12;
+  }).length;
+
   if (loading && !metrics && !error) {
     return (
       <div className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {[0, 1, 2, 3].map((i) => (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          {[0, 1, 2, 3, 4].map((i) => (
             <Card key={i} className="border border-blue-100 shadow-sm">
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -300,7 +406,7 @@ export default function MetricsCards() {
   return (
     <div className="space-y-4">
       {/* Top Stats */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
 
         {/* Emails Today */}
         <Card className="border border-blue-100 shadow-sm hover:shadow-md transition-shadow">
@@ -351,6 +457,39 @@ export default function MetricsCards() {
                   <br />
                   Oldest pending: {oldestPendingLabel}
                 </>
+              )}
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Avg Wait Time - NEW */}
+        <Card
+          className={`border shadow-sm hover:shadow-md transition-shadow ${getWaitTimeBgColor(
+            avgWaitTimeData.urgency
+          )}`}
+        >
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+              <Clock className="h-4 w-4" />
+              Avg Wait Time
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className={`text-3xl font-bold flex items-center gap-2 ${getWaitTimeColor(avgWaitTimeData.urgency)}`}>
+              {avgWaitTimeData.urgency === "critical" && (
+                <AlertTriangle className="h-6 w-6" />
+              )}
+              {avgWaitTimeData.label}
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {reviewEmails.length === 0 ? (
+                "No emails pending"
+              ) : urgentCount > 0 ? (
+                <span className="text-red-600 font-medium">
+                  ⚠ {urgentCount} urgent ({">"}12hrs)
+                </span>
+              ) : (
+                "Pending emails avg wait"
               )}
             </p>
           </CardContent>
