@@ -5,21 +5,23 @@ import { Input } from "@/components/ui/input";
 import ManualReviewTable from "@/components/manual-review-table";
 import AutoSentTable from "@/components/auto-sent-table";
 import { SAMPLE_EMAILS } from "@/components/sample-emails";
-import { CheckSquare, Square, Trash2, Send, Save, X, RotateCcw, Clock, AlertTriangle } from "lucide-react";
+import { CheckSquare, Square, Trash2, Send, Save, X, RotateCcw, Clock, AlertTriangle, RefreshCw, Mail, CheckCircle } from "lucide-react";
 
-type FilterType = "all" | "today" | "high" | "low";
-type EmailStatus = "auto" | "review";
+type FilterType = "all" | "today";
+type EmailStatus = "auto" | "review" | "sent";
 
 export type Email = {
   id: number;
   student_name?: string | null;
   uni?: string | null;
+  email_address?: string | null;
   subject: string;
   body: string;
   confidence: number; // 0–1
   status: EmailStatus;
   suggested_reply: string;
   received_at: string; // ISO timestamp from backend
+  approved_at?: string | null; // ISO timestamp when approved/sent
 };
 
 type Metrics = {
@@ -27,12 +29,20 @@ type Metrics = {
   emails_today: number;
   auto_count: number;
   review_count: number;
+  sent_count?: number;
+};
+
+type SyncResult = {
+  ingested: number;
+  auto_sent: number;
+  last_synced_at: string | null;
 };
 
 const BACKEND_URL = "http://127.0.0.1:8000";
 const CONFIDENCE_THRESHOLD_KEY = "confidenceThresholdPct";
 const DEFAULT_CONFIDENCE_THRESHOLD_PCT = 90; // fallback if nothing saved
 const DRAFTS_STORAGE_KEY = "emailDrafts";
+const AUTO_SYNC_INTERVAL = 60000; // 60 seconds
 
 // Helper to calculate waiting time
 type WaitingTimeInfo = {
@@ -60,7 +70,7 @@ function getWaitingTime(received_at: string): WaitingTimeInfo {
 
   let label: string;
   if (diffMinutes < 1) {
-    label = "< 1m";
+    label = "<1m";
   } else if (diffMinutes < 60) {
     label = `${diffMinutes}m`;
   } else if (diffHours < 24) {
@@ -89,13 +99,18 @@ function getWaitingTime(received_at: string): WaitingTimeInfo {
 export default function EmailsTab() {
   const [searchTerm, setSearchTerm] = useState("");
   const [activeFilter, setActiveFilter] = useState<FilterType>("all");
-  const [activeSection, setActiveSection] = useState<"review" | "auto">("review");
+  const [activeSection, setActiveSection] = useState<"review" | "pending" | "sent">("review");
 
   const [reviewEmails, setReviewEmails] = useState<Email[]>([]);
-  const [autoEmails, setAutoEmails] = useState<Email[]>([]);
+  const [pendingEmails, setPendingEmails] = useState<Email[]>([]);
+  const [sentEmails, setSentEmails] = useState<Email[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [seeding, setSeeding] = useState<boolean>(false);
+  const [syncing, setSyncing] = useState<boolean>(false);
+  const [sending, setSending] = useState<boolean>(false);
+  const [lastSyncResult, setLastSyncResult] = useState<SyncResult | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
   // detail panel
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
@@ -105,7 +120,10 @@ export default function EmailsTab() {
   // metrics from backend
   const [metrics, setMetrics] = useState<Metrics | null>(null);
 
-  // confidence threshold for high vs low (0–1), set from Settings
+  // Gmail connection status
+  const [gmailConnected, setGmailConnected] = useState<boolean>(false);
+
+  // confidence threshold for reference
   const [confidenceThreshold, setConfidenceThreshold] = useState<number>(
     DEFAULT_CONFIDENCE_THRESHOLD_PCT / 100,
   );
@@ -121,20 +139,16 @@ export default function EmailsTab() {
     { id: "all", label: "All", description: "Show all emails" },
     {
       id: "today",
-      label: "Sent Today",
+      label: "Received Today",
       description: "Emails received today",
     },
-    {
-      id: "high",
-      label: "High Confidence",
-      description: "Emails at or above the advisor's confidence threshold",
-    },
-    {
-      id: "low",
-      label: "Low Confidence",
-      description: "Emails below the advisor's confidence threshold",
-    },
   ];
+
+  // Show toast notification
+  const showToast = useCallback((message: string, type: "success" | "error") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  }, []);
 
   // --- Load confidence threshold from localStorage (set in Settings) ---
   useEffect(() => {
@@ -169,26 +183,37 @@ export default function EmailsTab() {
     window.localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(savedDrafts));
   }, [savedDrafts]);
 
+  // --- Fetch Gmail status ---
+  async function fetchGmailStatus() {
+    try {
+      const res = await fetch(`${BACKEND_URL}/gmail/status`);
+      if (res.ok) {
+        const data = await res.json();
+        setGmailConnected(data.connected);
+      }
+    } catch (err) {
+      console.error("Failed to fetch Gmail status:", err);
+    }
+  }
+
   // --- Fetch emails from backend ---
   async function fetchEmails() {
     try {
       setLoading(true);
       setError(null);
 
-      const [autoRes, reviewRes] = await Promise.all([
-        fetch(`${BACKEND_URL}/emails?status=auto`),
-        fetch(`${BACKEND_URL}/emails?status=review`),
-      ]);
-
-      if (!autoRes.ok || !reviewRes.ok) {
+      // Fetch all emails
+      const res = await fetch(`${BACKEND_URL}/emails`);
+      if (!res.ok) {
         throw new Error("Failed to fetch emails from backend");
       }
 
-      const autoData: Email[] = await autoRes.json();
-      const reviewData: Email[] = await reviewRes.json();
+      const allEmails: Email[] = await res.json();
 
-      setAutoEmails(autoData);
-      setReviewEmails(reviewData);
+      // Split into three categories
+      setReviewEmails(allEmails.filter((e) => e.status === "review"));
+      setPendingEmails(allEmails.filter((e) => e.status === "auto"));
+      setSentEmails(allEmails.filter((e) => e.status === "sent"));
     } catch (err) {
       console.error(err);
       setError("Could not load emails from backend");
@@ -212,6 +237,41 @@ export default function EmailsTab() {
     }
   }
 
+  // --- Sync emails from Gmail ---
+  async function syncEmails() {
+    if (!gmailConnected) {
+      showToast("Gmail not connected. Please connect in Settings.", "error");
+      return;
+    }
+
+    try {
+      setSyncing(true);
+      setError(null);
+
+      const res = await fetch(`${BACKEND_URL}/gmail/fetch`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Failed to sync emails");
+      }
+
+      const data: SyncResult = await res.json();
+      setLastSyncResult(data);
+
+      await Promise.all([fetchEmails(), fetchMetrics()]);
+
+      if (data.ingested > 0) {
+        showToast(`Synced ${data.ingested} new email(s) from Gmail`, "success");
+      } else {
+        showToast("No new emails to sync", "success");
+      }
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.message || "Could not sync emails", "error");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   // --- Seed ONE random example email into backend ---
   async function seedExampleEmails() {
     try {
@@ -224,6 +284,7 @@ export default function EmailsTab() {
       const sampleEmail = {
         student_name: random.student_name,
         uni: random.uni,
+        email_address: random.email,
         subject: random.subject,
         body: random.body,
         received_at: new Date().toISOString(),
@@ -236,6 +297,7 @@ export default function EmailsTab() {
       });
 
       await Promise.all([fetchEmails(), fetchMetrics()]);
+      showToast("Sample email created", "success");
     } catch (err) {
       console.error(err);
       setError("Could not create sample email");
@@ -244,8 +306,53 @@ export default function EmailsTab() {
     }
   }
 
-  // --- Advisor actions: approve reply (status -> auto) ---
-  async function handleApprove(emailId: number, newReply?: string) {
+  // --- Advisor actions: approve and send reply via Gmail ---
+  async function handleApproveAndSend(emailId: number, newReply?: string) {
+    try {
+      setSending(true);
+
+      // First update the reply if changed
+      if (newReply !== undefined) {
+        await fetch(`${BACKEND_URL}/emails/${emailId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ suggested_reply: newReply }),
+        });
+      }
+
+      // Then send the reply via Gmail
+      const res = await fetch(`${BACKEND_URL}/emails/${emailId}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reply_text: newReply }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Failed to send reply");
+      }
+
+      const data = await res.json();
+      showToast(data.message || "Reply sent successfully!", "success");
+
+      // Remove from saved drafts after sending
+      setSavedDrafts((prev) => {
+        const updated = { ...prev };
+        delete updated[emailId];
+        return updated;
+      });
+
+      await Promise.all([fetchEmails(), fetchMetrics()]);
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.message || "Could not send reply", "error");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // --- Advisor actions: approve only (change status to auto without sending) ---
+  async function handleApproveOnly(emailId: number, newReply?: string) {
     try {
       const body: any = { status: "auto" };
       if (newReply !== undefined) {
@@ -266,6 +373,7 @@ export default function EmailsTab() {
       });
 
       await Promise.all([fetchEmails(), fetchMetrics()]);
+      showToast("Email approved", "success");
     } catch (err) {
       console.error(err);
       setError("Could not update email status");
@@ -294,6 +402,7 @@ export default function EmailsTab() {
       });
 
       await Promise.all([fetchEmails(), fetchMetrics()]);
+      showToast("Email deleted", "success");
     } catch (err) {
       console.error(err);
       setError("Could not delete email");
@@ -310,21 +419,26 @@ export default function EmailsTab() {
     setTimeout(() => setDraftSaved(false), 2000);
   }
 
-  // --- Bulk approve selected emails ---
-  async function handleBulkApprove() {
+  // --- Bulk approve and send selected emails ---
+  async function handleBulkApproveAndSend() {
     if (selectedIds.size === 0) return;
+
+    if (!gmailConnected) {
+      showToast("Gmail not connected. Please connect in Settings.", "error");
+      return;
+    }
 
     setBulkActionLoading(true);
     try {
       const promises = Array.from(selectedIds).map((id) => {
         const draft = savedDrafts[id];
-        return handleApprove(id, draft);
+        return handleApproveAndSend(id, draft);
       });
       await Promise.all(promises);
       setSelectedIds(new Set());
     } catch (err) {
       console.error(err);
-      setError("Could not approve selected emails");
+      setError("Could not approve and send selected emails");
     } finally {
       setBulkActionLoading(false);
     }
@@ -424,12 +538,35 @@ export default function EmailsTab() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
+  // --- Initial load ---
   useEffect(() => {
     fetchEmails();
     fetchMetrics();
+    fetchGmailStatus();
   }, []);
 
-  // --- Helper: calendar "same day" check for Sent Today ---
+  // --- Auto-sync polling (every 60 seconds if Gmail is connected) ---
+  useEffect(() => {
+    if (!gmailConnected) return;
+
+    const interval = setInterval(() => {
+      // Silent sync - don't show loading indicator for auto-sync
+      fetch(`${BACKEND_URL}/gmail/fetch`)
+        .then((res) => res.json())
+        .then((data: SyncResult) => {
+          if (data.ingested > 0) {
+            fetchEmails();
+            fetchMetrics();
+            showToast(`${data.ingested} new email(s) received`, "success");
+          }
+        })
+        .catch(console.error);
+    }, AUTO_SYNC_INTERVAL);
+
+    return () => clearInterval(interval);
+  }, [gmailConnected, showToast]);
+
+  // --- Helper: calendar "same day" check for Received Today ---
   function isSameDay(a: Date, b: Date) {
     return (
       a.getFullYear() === b.getFullYear() &&
@@ -442,21 +579,13 @@ export default function EmailsTab() {
   function filterEmails(emails: Email[]): Email[] {
     let filtered = [...emails];
 
-    // Sent Today → filter by calendar day
+    // Received Today → filter by calendar day
     if (activeFilter === "today") {
       const today = new Date();
       filtered = filtered.filter((e) => {
         const t = new Date(e.received_at);
         return isSameDay(t, today);
       });
-    }
-
-    // High / Low confidence using the advisor-set threshold
-    if (activeFilter === "high") {
-      filtered = filtered.filter((e) => e.confidence >= confidenceThreshold);
-    }
-    if (activeFilter === "low") {
-      filtered = filtered.filter((e) => e.confidence < confidenceThreshold);
     }
 
     // Text search: student name, UNI, subject
@@ -475,17 +604,30 @@ export default function EmailsTab() {
   }
 
   const filteredReviewEmails = filterEmails(reviewEmails);
-  const filteredAutoEmails = filterEmails(autoEmails);
+  const filteredPendingEmails = filterEmails(pendingEmails);
+  const filteredSentEmails = filterEmails(sentEmails);
 
   // Count selected in current view
-  const selectedInView = activeSection === "review"
-    ? filteredReviewEmails.filter((e) => selectedIds.has(e.id)).length
-    : filteredAutoEmails.filter((e) => selectedIds.has(e.id)).length;
+  const selectedInView =
+    activeSection === "review"
+      ? filteredReviewEmails.filter((e) => selectedIds.has(e.id)).length
+      : activeSection === "pending"
+      ? filteredPendingEmails.filter((e) => selectedIds.has(e.id)).length
+      : filteredSentEmails.filter((e) => selectedIds.has(e.id)).length;
 
-  const currentEmails = activeSection === "review" ? filteredReviewEmails : filteredAutoEmails;
+  const currentEmails =
+    activeSection === "review"
+      ? filteredReviewEmails
+      : activeSection === "pending"
+      ? filteredPendingEmails
+      : filteredSentEmails;
+
   const allVisibleSelected = currentEmails.length > 0 && currentEmails.every((e) => selectedIds.has(e.id));
 
-  if (loading && !seeding && reviewEmails.length === 0 && autoEmails.length === 0) {
+  // Check if current email has unsaved changes
+  const hasUnsavedChanges = selectedEmail && replyDraft !== (savedDrafts[selectedEmail.id] ?? selectedEmail.suggested_reply);
+  
+  if (loading && !seeding && reviewEmails.length === 0 && pendingEmails.length === 0 && sentEmails.length === 0) {
     return (
       <div className="space-y-6">
         <h2 className="text-2xl font-bold text-foreground">Email Management</h2>
@@ -503,13 +645,29 @@ export default function EmailsTab() {
     );
   }
 
-  const thresholdPctLabel = Math.round(confidenceThreshold * 100);
-
-  // Check if current email has unsaved changes
-  const hasUnsavedChanges = selectedEmail && replyDraft !== (savedDrafts[selectedEmail.id] ?? selectedEmail.suggested_reply);
-
   return (
     <>
+      {/* Toast Notification */}
+      {toast && (
+        <div
+          className={`fixed top-4 right-4 z-[100] px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 ${
+            toast.type === "success"
+              ? "bg-green-600 text-white"
+              : "bg-red-600 text-white"
+          }`}
+        >
+          {toast.type === "success" ? (
+            <CheckCircle className="w-5 h-5" />
+          ) : (
+            <X className="w-5 h-5" />
+          )}
+          <span>{toast.message}</span>
+          <button onClick={() => setToast(null)} className="ml-2 hover:opacity-80">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       <div className="space-y-6">
         {/* Header */}
         <div>
@@ -521,7 +679,7 @@ export default function EmailsTab() {
 
         {/* Metrics strip */}
         {metrics && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <div className="rounded-lg border border-border p-3">
               <p className="text-xs text-muted-foreground">Total emails</p>
               <p className="text-xl font-semibold">{metrics.emails_total}</p>
@@ -535,24 +693,58 @@ export default function EmailsTab() {
               <p className="text-xl font-semibold">{metrics.review_count}</p>
             </div>
             <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted-foreground">Approved</p>
+              <p className="text-xs text-muted-foreground">Pending send</p>
               <p className="text-xl font-semibold">{metrics.auto_count}</p>
+            </div>
+            <div className="rounded-lg border border-border p-3 bg-green-50">
+              <p className="text-xs text-muted-foreground">Sent</p>
+              <p className="text-xl font-semibold text-green-600">{metrics.sent_count || 0}</p>
             </div>
           </div>
         )}
 
-        {/* Seed sample email button */}
-        <div className="flex items-center gap-3">
+        {/* Action buttons */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Sync from Gmail button */}
+          <button
+            onClick={syncEmails}
+            disabled={syncing || !gmailConnected}
+            className={`px-4 py-2 rounded-lg text-sm font-medium shadow-md flex items-center gap-2 ${
+              gmailConnected
+                ? "bg-green-600 text-white hover:bg-green-700 disabled:opacity-60"
+                : "bg-gray-400 text-white cursor-not-allowed"
+            }`}
+            title={gmailConnected ? "Fetch new emails from Gmail" : "Connect Gmail in Settings first"}
+          >
+            <RefreshCw className={`w-4 h-4 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Syncing..." : "Sync from Gmail"}
+          </button>
+
+          {/* Generate sample email button */}
           <button
             onClick={seedExampleEmails}
             disabled={seeding}
-            className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white shadow-md hover:bg-blue-700 disabled:opacity-60"
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white shadow-md hover:bg-blue-700 disabled:opacity-60 flex items-center gap-2"
           >
-            {seeding ? "Creating sample email..." : "Generate sample email"}
+            <Mail className="w-4 h-4" />
+            {seeding ? "Creating..." : "Generate sample email"}
           </button>
-          <span className="text-xs text-muted-foreground">
-            Each click adds a new example student email into the system.
-          </span>
+
+          {/* Status indicators */}
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span
+              className={`inline-block w-2 h-2 rounded-full ${
+                gmailConnected ? "bg-green-500" : "bg-gray-400"
+              }`}
+            />
+            {gmailConnected ? "Gmail connected" : "Gmail not connected"}
+          </div>
+
+          {lastSyncResult && lastSyncResult.last_synced_at && (
+            <span className="text-xs text-muted-foreground">
+              Last sync: {new Date(lastSyncResult.last_synced_at).toLocaleTimeString()}
+            </span>
+          )}
         </div>
 
         {/* Quick Filters */}
@@ -571,9 +763,6 @@ export default function EmailsTab() {
               {filter.label}
             </button>
           ))}
-          <span className="text-xs text-muted-foreground">
-            High/Low confidence split at {thresholdPctLabel}% (set in Settings).
-          </span>
         </div>
 
         {/* Bulk Actions Bar */}
@@ -585,12 +774,24 @@ export default function EmailsTab() {
             <div className="flex gap-2 ml-auto">
               {activeSection === "review" && (
                 <button
-                  onClick={handleBulkApprove}
-                  disabled={bulkActionLoading}
+                  onClick={handleBulkApproveAndSend}
+                  disabled={bulkActionLoading || !gmailConnected}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-60"
+                  title={gmailConnected ? "Approve and send all selected" : "Connect Gmail first"}
                 >
                   <Send className="h-4 w-4" />
                   Approve & Send All
+                </button>
+              )}
+              {activeSection === "pending" && (
+                <button
+                  onClick={handleBulkApproveAndSend}
+                  disabled={bulkActionLoading || !gmailConnected}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-60"
+                  title={gmailConnected ? "Send all selected" : "Connect Gmail first"}
+                >
+                  <Send className="h-4 w-4" />
+                  Send All
                 </button>
               )}
               <button
@@ -625,14 +826,24 @@ export default function EmailsTab() {
             Needs Review ({filteredReviewEmails.length})
           </button>
           <button
-            onClick={() => setActiveSection("auto")}
+            onClick={() => setActiveSection("pending")}
             className={`pb-3 px-1 font-medium text-sm transition-all ${
-              activeSection === "auto"
+              activeSection === "pending"
                 ? "text-blue-600 border-b-2 border-blue-600"
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            Approved ({filteredAutoEmails.length})
+            Pending Send ({filteredPendingEmails.length})
+          </button>
+          <button
+            onClick={() => setActiveSection("sent")}
+            className={`pb-3 px-1 font-medium text-sm transition-all ${
+              activeSection === "sent"
+                ? "text-blue-600 border-b-2 border-blue-600"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Sent ({filteredSentEmails.length})
           </button>
         </div>
 
@@ -667,7 +878,7 @@ export default function EmailsTab() {
             <ManualReviewTable
               emails={filteredReviewEmails}
               searchTerm={searchTerm}
-              onApprove={(id) => handleApprove(id)}
+              onApprove={(id) => handleApproveOnly(id)}
               onDelete={handleDelete}
               onSelect={handleSelect}
               selectedIds={selectedIds}
@@ -677,9 +888,9 @@ export default function EmailsTab() {
           </div>
         )}
 
-        {activeSection === "auto" && (
+        {activeSection === "pending" && (
           <div className="space-y-4">
-            {/* Search bar + Select All for Approved */}
+            {/* Search bar + Select All for Pending Send */}
             <div className="flex items-center gap-3">
               <Input
                 placeholder="Search by student name, UNI, or subject..."
@@ -687,10 +898,10 @@ export default function EmailsTab() {
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="max-w-md"
               />
-              {filteredAutoEmails.length > 0 && (
+              {filteredPendingEmails.length > 0 && (
                 <button
                   onClick={() =>
-                    allVisibleSelected ? deselectAll() : selectAllVisible(filteredAutoEmails)
+                    allVisibleSelected ? deselectAll() : selectAllVisible(filteredPendingEmails)
                   }
                   className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium bg-gray-100 text-foreground hover:bg-gray-200"
                 >
@@ -705,7 +916,46 @@ export default function EmailsTab() {
             </div>
 
             <AutoSentTable
-              emails={filteredAutoEmails}
+              emails={filteredPendingEmails}
+              searchTerm={searchTerm}
+              onDelete={handleDelete}
+              onSelect={handleSelect}
+              onSend={handleApproveAndSend}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+            />
+          </div>
+        )}
+
+        {activeSection === "sent" && (
+          <div className="space-y-4">
+            {/* Search bar + Select All for Sent */}
+            <div className="flex items-center gap-3">
+              <Input
+                placeholder="Search by student name, UNI, or subject..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="max-w-md"
+              />
+              {filteredSentEmails.length > 0 && (
+                <button
+                  onClick={() =>
+                    allVisibleSelected ? deselectAll() : selectAllVisible(filteredSentEmails)
+                  }
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium bg-gray-100 text-foreground hover:bg-gray-200"
+                >
+                  {allVisibleSelected ? (
+                    <CheckSquare className="h-4 w-4" />
+                  ) : (
+                    <Square className="h-4 w-4" />
+                  )}
+                  {allVisibleSelected ? "Deselect All" : "Select All"}
+                </button>
+              )}
+            </div>
+
+            <AutoSentTable
+              emails={filteredSentEmails}
               searchTerm={searchTerm}
               onDelete={handleDelete}
               onSelect={handleSelect}
@@ -731,6 +981,16 @@ export default function EmailsTab() {
                     <>
                       {" · UNI: "}
                       {selectedEmail.uni}
+                    </>
+                  )}
+                  {selectedEmail.email_address && (
+                    <>
+                      {" · "}
+                      {selectedEmail.email_address}
+                    </>
+                  )}
+                  {!selectedEmail.email_address && selectedEmail.uni && (
+                    <>
                       {" · "}
                       {`${selectedEmail.uni}@columbia.edu`}
                     </>
@@ -740,31 +1000,49 @@ export default function EmailsTab() {
                   Received:{" "}
                   {new Date(selectedEmail.received_at).toLocaleString()}
                 </p>
-                {/* Waiting time indicator */}
-                {selectedEmail.status === "review" && (() => {
-                  const waitTime = getWaitingTime(selectedEmail.received_at);
-                  return (
-                    <div
-                      className={`inline-flex items-center gap-1.5 mt-1 rounded-full px-2.5 py-1 text-xs font-medium ${
-                        waitTime.urgency === "low"
-                          ? "bg-green-100 text-green-800"
-                          : waitTime.urgency === "medium"
-                          ? "bg-yellow-100 text-yellow-800"
-                          : waitTime.urgency === "high"
-                          ? "bg-orange-100 text-orange-800"
-                          : "bg-red-100 text-red-800"
-                      }`}
-                    >
-                      {waitTime.urgency === "critical" ? (
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                      ) : (
-                        <Clock className="h-3.5 w-3.5" />
-                      )}
-                      Waiting: {waitTime.label}
-                      {waitTime.urgency === "critical" && " — Urgent!"}
-                    </div>
-                  );
-                })()}
+                
+                {/* Status badges */}
+                <div className="flex items-center gap-2 mt-1">
+                  {selectedEmail.status === "sent" && (
+                    <span className="inline-flex items-center gap-1 text-xs text-green-600 bg-green-100 px-2 py-1 rounded-full">
+                      <CheckCircle className="w-3 h-3" />
+                      Reply Sent
+                    </span>
+                  )}
+
+                  {selectedEmail.status === "auto" && (
+                    <span className="inline-flex items-center gap-1 text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
+                      <Clock className="w-3 h-3" />
+                      Pending Send
+                    </span>
+                  )}
+                  
+                  {/* Waiting time indicator for review emails */}
+                  {selectedEmail.status === "review" && (() => {
+                    const waitTime = getWaitingTime(selectedEmail.received_at);
+                    return (
+                      <div
+                        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
+                          waitTime.urgency === "low"
+                            ? "bg-green-100 text-green-800"
+                            : waitTime.urgency === "medium"
+                            ? "bg-yellow-100 text-yellow-800"
+                            : waitTime.urgency === "high"
+                            ? "bg-orange-100 text-orange-800"
+                            : "bg-red-100 text-red-800"
+                        }`}
+                      >
+                        {waitTime.urgency === "critical" ? (
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                        ) : (
+                          <Clock className="h-3.5 w-3.5" />
+                        )}
+                        Waiting: {waitTime.label}
+                        {waitTime.urgency === "critical" && " — Urgent!"}
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
               <button
                 onClick={closeDetail}
@@ -807,7 +1085,7 @@ export default function EmailsTab() {
                   onChange={(e) => setReplyDraft(e.target.value)}
                 />
               ) : (
-                // Read-only for approved emails
+                // Read-only for approved/sent emails
                 <div className="text-sm border border-border rounded-md p-3 bg-muted/40 whitespace-pre-wrap">
                   {selectedEmail.suggested_reply}
                 </div>
@@ -818,6 +1096,11 @@ export default function EmailsTab() {
             <div className="flex items-center justify-between mb-4">
               <p className="text-xs text-muted-foreground">
                 Confidence: {(selectedEmail.confidence * 100).toFixed(0)}%
+                {selectedEmail.email_address && (
+                  <span className="ml-2">
+                    · Will send to: <span className="font-medium">{selectedEmail.email_address}</span>
+                  </span>
+                )}
               </p>
               {savedDrafts[selectedEmail.id] && (
                 <span className="text-xs text-amber-600 font-medium">
@@ -833,18 +1116,20 @@ export default function EmailsTab() {
 
             {/* Action buttons */}
             <div className="flex flex-wrap gap-2">
-              {/* ONLY show these buttons when email is NOT approved */}
+              {/* Approve & Send button - only for review emails */}
               {selectedEmail.status === "review" && (
                 <>
                   <button
                     onClick={async () => {
-                      await handleApprove(selectedEmail.id, replyDraft);
+                      await handleApproveAndSend(selectedEmail.id, replyDraft);
                       closeDetail();
                     }}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-700"
+                    disabled={sending || !gmailConnected}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-60"
+                    title={gmailConnected ? "Approve and send reply via Gmail" : "Connect Gmail first"}
                   >
                     <Send className="h-4 w-4" />
-                    Approve & Send
+                    {sending ? "Sending..." : "Approve & Send"}
                   </button>
                   <button
                     onClick={() => handleSaveDraft(selectedEmail.id, replyDraft)}
@@ -857,17 +1142,35 @@ export default function EmailsTab() {
                 </>
               )}
 
-              {/* Delete is always available */}
-              <button
-                onClick={async () => {
-                  await handleDelete(selectedEmail.id);
-                  closeDetail();
-                }}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700"
-              >
-                <Trash2 className="h-4 w-4" />
-                Delete
-              </button>
+              {/* Send button for pending send emails */}
+              {selectedEmail.status === "auto" && (
+                <button
+                  onClick={async () => {
+                    await handleApproveAndSend(selectedEmail.id);
+                    closeDetail();
+                  }}
+                  disabled={sending || !gmailConnected}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-60"
+                  title={gmailConnected ? "Send reply via Gmail" : "Connect Gmail first"}
+                >
+                  <Send className="h-4 w-4" />
+                  {sending ? "Sending..." : "Send Reply"}
+                </button>
+              )}
+
+              {/* Delete is always available (except for sent emails) */}
+              {selectedEmail.status !== "sent" && (
+                <button
+                  onClick={async () => {
+                    await handleDelete(selectedEmail.id);
+                    closeDetail();
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete
+                </button>
+              )}
 
               <button
                 onClick={closeDetail}

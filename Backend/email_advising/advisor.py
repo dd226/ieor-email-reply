@@ -107,53 +107,62 @@ class EmailAdvisor:
         self.vectorizer = TfIdfVectorizer(documents)
 
     def rank_articles(self, query: str) -> List[RankedMatch]:
+        """Rank knowledge base articles by relevance and confidence.
+        
+        Uses Jaccard similarity on raw tokens to measure how well the query 
+        matches known utterances, then applies explicit confidence thresholds.
+        """
         raw_query_tokens = tokenize(query)
         query_tokens = augment_tokens(raw_query_tokens)
-        token_set = set(query_tokens)
         raw_token_set = set(raw_query_tokens)
-        domain_token_set = {token for token in query_tokens if token in self._domain_vocabulary}
+        
+        # TF-IDF gives us semantic similarity using augmented tokens
         scores = self.vectorizer.similarities(query_tokens)
         ranked: List[RankedMatch] = []
-        for idx, (article, score) in enumerate(zip(self.knowledge_base.articles, scores)):
-            overlap = 0.0
-            if token_set:
-                overlap = len(token_set & self._article_token_sets[idx]) / len(token_set)
-            utterance_tokens = self._utterance_token_sets[idx]
-            exact_match = any(ut == raw_query_tokens for ut in utterance_tokens if ut)
-            category_tokens = self._category_token_sets[idx]
-            category_overlap = 0.0
-            if category_tokens and token_set:
-                category_overlap = len(token_set & category_tokens) / len(category_tokens)
-            domain_overlap = 0.0
-            if domain_token_set:
-                domain_overlap = len(domain_token_set & self._article_token_sets[idx]) / len(domain_token_set)
-            utterance_similarity = 0.0
+        
+        for idx, (article, tfidf_score) in enumerate(zip(self.knowledge_base.articles, scores)):
+            utterance_token_lists = self._utterance_token_sets[idx]
+            
+            # Check for exact token match (user query exactly matches an utterance)
+            exact_match = any(ut == raw_query_tokens for ut in utterance_token_lists if ut)
+            
+            # Calculate best Jaccard similarity with any utterance using RAW tokens only
+            # This measures phrase/pattern matching without semantic augmentation
+            best_utterance_similarity = 0.0
             if raw_token_set:
-                for utterance in utterance_tokens:
-                    if not utterance:
+                for utterance_tokens in utterance_token_lists:
+                    if not utterance_tokens:
                         continue
-                    utterance_set = set(utterance)
+                    utterance_set = set(utterance_tokens)
                     intersection = len(raw_token_set & utterance_set)
-                    denominator = max(len(raw_token_set), len(utterance_set))
-                    if denominator:
-                        utterance_similarity = max(utterance_similarity, intersection / denominator)
-            blended_score = (
-                0.35 * score
-                + 0.2 * overlap
-                + 0.25 * domain_overlap
-                + 0.15 * category_overlap
-                + 0.05 * utterance_similarity
-            )
-            category_matches = len(category_tokens & domain_token_set)
-            if category_matches:
-                blended_score += min(0.2, 0.08 * category_matches)
+                    union = len(raw_token_set | utterance_set)
+                    jaccard = intersection / union if union > 0 else 0.0
+                    best_utterance_similarity = max(best_utterance_similarity, jaccard)
+            
+            # Apply explicit confidence thresholds based on utterance match quality
+            # This ensures high-quality matches get appropriate confidence scores
             if exact_match:
-                blended_score = max(blended_score, 1.0)
-            if blended_score > 1.0:
-                blended_score = 1.0
+                confidence = 1.0
+            elif best_utterance_similarity >= 0.70:
+                # Strong pattern match: 70%+ token overlap → 92% confidence minimum
+                confidence = max(tfidf_score, 0.92)
+            elif best_utterance_similarity >= 0.50:
+                # Good pattern match: 50%+ token overlap → 75% confidence minimum
+                confidence = max(tfidf_score, 0.75)
+            elif best_utterance_similarity >= 0.30:
+                # Moderate pattern match: 30%+ token overlap → 60% confidence minimum
+                confidence = max(tfidf_score, 0.60)
+            else:
+                # No strong pattern match: use TF-IDF score as-is
+                confidence = tfidf_score
+            
+            # Ensure confidence stays in valid range
+            confidence = min(confidence, 1.0)
+            
             ranked.append(
-                RankedMatch(article_id=article.id, subject=article.subject, confidence=blended_score)
+                RankedMatch(article_id=article.id, subject=article.subject, confidence=confidence)
             )
+        
         ranked.sort(key=lambda item: item.confidence, reverse=True)
         return ranked
 

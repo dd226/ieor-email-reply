@@ -108,6 +108,7 @@ Base = declarative_base()
 class EmailStatus(str, Enum):
     auto = "auto"      # approved / high-confidence
     review = "review"  # needs manual review
+    sent = "sent"      # reply has been sent
 
 
 # ---------- Pydantic models (API schemas) ----------
@@ -120,6 +121,7 @@ class EmailIn(BaseModel):
     """
     student_name: Optional[str] = None
     uni: Optional[str] = None
+    email_address: Optional[str] = None  # sender's email address
     subject: str
     body: str
     received_at: Optional[datetime] = None
@@ -132,12 +134,14 @@ class Email(BaseModel):
     id: int
     student_name: Optional[str] = None
     uni: Optional[str] = None
+    email_address: Optional[str] = None
     subject: str
     body: str
     confidence: float
     status: EmailStatus
     suggested_reply: str
     received_at: datetime
+    approved_at: Optional[datetime] = None
 
 
 class EmailUpdate(BaseModel):
@@ -212,12 +216,14 @@ class EmailORM(Base):
     id = Column(Integer, primary_key=True, index=True)
     student_name = Column(String, nullable=True)
     uni = Column(String, nullable=True)
+    email_address = Column(String, nullable=True)  # sender's email for replies
     subject = Column(String, nullable=False)
     body = Column(Text, nullable=False)
     confidence = Column(Float, nullable=False)
     status = Column(SAEnum(EmailStatus), nullable=False)
     suggested_reply = Column(Text, nullable=False)
     received_at = Column(DateTime, nullable=False, index=True)
+    approved_at = Column(DateTime, nullable=True)  # when advisor approved/sent
 
 
 # Create tables if they don't exist yet
@@ -308,13 +314,37 @@ def send_email_via_gmail_api(
     body: str,
 ) -> None:
     """
-    Send email using Gmail API (no SMTP/app password).
+    Send email using Gmail API with proper HTML formatting.
+    Handles both plain text and HTML rendering.
     """
+    import html
+    
     msg = EmailMessage()
     msg["From"] = from_addr
     msg["To"] = to_addr
-    msg["Subject"] = subject
+    msg["Subject"] = f"Re: {subject}" if not subject.startswith("Re:") else subject
+    
+    # Set plain text version
     msg.set_content(body)
+    
+    # Create HTML version with proper formatting
+    # Escape HTML entities and convert newlines to <br> tags
+    escaped_body = html.escape(body)
+    html_body = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body {{ font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.5; color: #333; }}
+        p {{ margin: 0 0 1em 0; }}
+    </style>
+</head>
+<body>
+    {escaped_body.replace(chr(10), '<br>')}
+</body>
+</html>"""
+    
+    msg.add_alternative(html_body, subtype="html")
 
     raw_bytes = msg.as_bytes()
     raw_b64 = base64.urlsafe_b64encode(raw_bytes).decode("utf-8")
@@ -341,12 +371,14 @@ def orm_to_schema(email_obj: EmailORM) -> Email:
         id=email_obj.id,
         student_name=email_obj.student_name,
         uni=email_obj.uni,
+        email_address=email_obj.email_address,
         subject=email_obj.subject,
         body=email_obj.body,
         confidence=email_obj.confidence,
         status=email_obj.status,
         suggested_reply=email_obj.suggested_reply,
         received_at=email_obj.received_at,
+        approved_at=email_obj.approved_at,
     )
 
 
@@ -508,7 +540,8 @@ def ingest_email(email_in: EmailIn):
     1. Run the EmailAdvisor on the email body.
     2. Decide if it's auto or review based on confidence.
     3. Store it in SQLite.
-    4. Return the stored email object.
+    4. If auto and settings enabled, send immediately.
+    5. Return the stored email object.
     """
     received_at = email_in.received_at or datetime.utcnow()
 
@@ -533,6 +566,7 @@ def ingest_email(email_in: EmailIn):
         email_obj = EmailORM(
             student_name=email_in.student_name,
             uni=email_in.uni,
+            email_address=email_in.email_address,
             subject=email_in.subject,
             body=email_in.body,
             confidence=confidence,
@@ -543,6 +577,30 @@ def ingest_email(email_in: EmailIn):
         db.add(email_obj)
         db.commit()
         db.refresh(email_obj)
+
+        # Auto-send if status is auto and settings allow it
+        if status == EmailStatus.auto:
+            settings = get_or_create_settings(db)
+            if settings.auto_send_enabled and email_in.email_address:
+                try:
+                    creds, gmail_address = load_gmail_credentials()
+                    if creds and creds.valid:
+                        send_email_via_gmail_api(
+                            creds=creds,
+                            from_addr=gmail_address or settings.email_address,
+                            to_addr=email_in.email_address,
+                            subject=email_obj.subject,
+                            body=suggested_reply,
+                        )
+                        email_obj.status = EmailStatus.sent
+                        email_obj.approved_at = datetime.utcnow()
+                        db.add(email_obj)
+                        db.commit()
+                        db.refresh(email_obj)
+                except Exception as exc:
+                    print(f"Failed to auto-send email to {email_in.email_address}: {exc}")
+                    # Keep status as auto if send fails, don't crash
+
         return orm_to_schema(email_obj)
     finally:
         db.close()
@@ -641,9 +699,19 @@ def sync_emails(limit: int = 20):
                 EmailStatus.auto if confidence >= threshold else EmailStatus.review
             )
 
+            # Extract UNI from email address (format: UNI@columbia.edu)
+            extracted_uni = None
+            if from_addr:
+                from_addr_lower = from_addr.lower()
+                if from_addr_lower.endswith("@columbia.edu"):
+                    extracted_uni = from_addr_lower.replace("@columbia.edu", "")
+                elif from_addr_lower.endswith("@barnard.edu"):
+                    extracted_uni = from_addr_lower.replace("@barnard.edu", "")
+
             email_obj = EmailORM(
-                student_name=from_name or from_addr,
-                uni=None,
+                student_name=from_name or None,
+                uni=extracted_uni,
+                email_address=from_addr,  # Store sender's email for replies!
                 subject=subject or "(no subject)",
                 body=body,
                 confidence=confidence,
@@ -665,11 +733,14 @@ def sync_emails(limit: int = 20):
                 try:
                     send_email_via_gmail_api(
                         creds=creds,
-                        from_addr=gmail_address or settings.email_address or from_addr,
+                        from_addr=gmail_address or settings.email_address,
                         to_addr=from_addr,
-                        subject=email_obj.subject,
-                        body=email_obj.suggested_reply,
+                        subject=subject,
+                        body=suggested_reply,
                     )
+                    email_obj.status = EmailStatus.sent
+                    db.add(email_obj)
+                    db.commit()
                     auto_sent += 1
                 except Exception as exc:
                     print("Failed to auto-send reply:", exc)
@@ -696,6 +767,102 @@ def sync_emails(limit: int = 20):
         db.close()
 
 
+# =====================================================
+# Gmail fetch endpoint (GET alias for sync)
+# =====================================================
+
+
+@app.get("/gmail/fetch")
+def gmail_fetch(limit: int = Query(default=20, description="Max emails to fetch")):
+    """
+    Fetch new emails from Gmail. GET endpoint for easy triggering.
+    This is an alias for POST /emails/sync for convenience.
+    """
+    return sync_emails(limit=limit)
+
+
+# =====================================================
+# Endpoint: Send reply for a specific email
+# =====================================================
+
+
+@app.post("/emails/{email_id}/send")
+def send_email_reply(email_id: int, reply_text: Optional[str] = None):
+    """
+    Send a reply email via Gmail API for the given email.
+    Optionally override the reply text.
+    Updates status to 'sent' after successful send.
+    """
+    db = SessionLocal()
+    try:
+        email_obj = db.query(EmailORM).filter(EmailORM.id == email_id).first()
+        if email_obj is None:
+            raise HTTPException(status_code=404, detail="Email not found")
+
+        # Get Gmail credentials
+        creds, gmail_address = load_gmail_credentials()
+        if not creds or not creds.valid:
+            raise HTTPException(
+                status_code=400,
+                detail="Gmail is not connected. Please connect Gmail in Settings.",
+            )
+
+        # Determine recipient
+        to_addr = email_obj.email_address
+        if not to_addr:
+            # Try to construct from UNI if available
+            if email_obj.uni:
+                to_addr = f"{email_obj.uni}@columbia.edu"
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No recipient email address available for this email.",
+                )
+
+        # Use provided reply text or the stored suggested_reply
+        final_reply = reply_text if reply_text is not None else email_obj.suggested_reply
+
+        # Update the suggested_reply if a new one was provided
+        if reply_text is not None:
+            email_obj.suggested_reply = reply_text
+
+        # Send the email
+        try:
+            send_email_via_gmail_api(
+                creds=creds,
+                from_addr=gmail_address,
+                to_addr=to_addr,
+                subject=email_obj.subject,
+                body=final_reply,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to send email: {str(exc)}",
+            )
+
+        # Update status to sent and set approved_at if not already set
+        email_obj.status = EmailStatus.sent
+        if email_obj.approved_at is None:
+            email_obj.approved_at = datetime.utcnow()
+        db.add(email_obj)
+        db.commit()
+        db.refresh(email_obj)
+
+        return {
+            "ok": True,
+            "message": f"Reply sent to {to_addr}",
+            "email": orm_to_schema(email_obj),
+        }
+    finally:
+        db.close()
+
+
+# =====================================================
+# Gmail disconnect
+# =====================================================
+
+
 @app.post("/gmail/disconnect")
 def gmail_disconnect():
     """
@@ -720,7 +887,7 @@ def gmail_disconnect():
 def list_emails(
     status: Optional[EmailStatus] = Query(
         default=None,
-        description="Filter by 'auto' or 'review'. Leave empty for all.",
+        description="Filter by 'auto', 'review', or 'sent'. Leave empty for all.",
     )
 ):
     """
@@ -728,6 +895,7 @@ def list_emails(
     /emails               → all
     /emails?status=auto   → only auto
     /emails?status=review → only review
+    /emails?status=sent   → only sent
     """
     db = SessionLocal()
     try:
@@ -759,6 +927,13 @@ def update_email(email_id: int, update: EmailUpdate):
             raise HTTPException(status_code=404, detail="Email not found")
 
         data = update.model_dump(exclude_unset=True)
+        
+        # Set approved_at timestamp when status changes to auto or sent
+        if "status" in data:
+            new_status = data["status"]
+            if new_status in (EmailStatus.auto, EmailStatus.sent) and email_obj.approved_at is None:
+                email_obj.approved_at = datetime.utcnow()
+        
         for field, value in data.items():
             setattr(email_obj, field, value)
 
@@ -855,6 +1030,12 @@ def metrics():
             .scalar()
             or 0
         )
+        sent_count = (
+            db.query(func.count(EmailORM.id))
+            .filter(EmailORM.status == EmailStatus.sent)
+            .scalar()
+            or 0
+        )
 
         # Average confidence for ALL emails
         avg_conf = db.query(func.avg(EmailORM.confidence)).scalar()
@@ -875,6 +1056,7 @@ def metrics():
             "emails_today": int(emails_today),
             "auto_count": int(auto_count),
             "review_count": int(review_count),
+            "sent_count": int(sent_count),
             "avg_confidence": float(avg_conf),
             "avg_auto_confidence": float(avg_auto_conf),
         }

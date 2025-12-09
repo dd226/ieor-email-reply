@@ -4,3 +4,4 @@ __pycache__/
 .DS_Store
 Backend/emails.db
 Backend/data/google_client_secrets.json
+Backend/data/gmail_token.json
