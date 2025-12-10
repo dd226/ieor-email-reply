@@ -5,6 +5,8 @@ from pathlib import Path
 from datetime import datetime, date
 from enum import Enum
 from typing import List, Optional, Dict
+from datetime import timezone as dt_timezone, timedelta
+from zoneinfo import ZoneInfo
 
 import email
 from email.header import decode_header
@@ -86,6 +88,38 @@ knowledge_base = load_knowledge_base()
 reference_corpus = load_reference_corpus()
 retriever = TfidfRetriever(reference_corpus)
 advisor = EmailAdvisor(knowledge_base, retriever=retriever)
+
+
+@app.get("/knowledge-base")
+def get_knowledge_base_articles():
+    """Expose the current knowledge base articles for the frontend settings view."""
+    return [
+        {
+            "id": article.id,
+            "subject": article.subject,
+            "categories": list(article.categories),
+            "utterances": list(article.utterances),
+            "response_template": article.response_template,
+            "follow_up_questions": list(article.follow_up_questions),
+            "metadata": article.metadata or {},
+        }
+        for article in knowledge_base.articles
+    ]
+
+
+@app.get("/reference-corpus")
+def get_reference_corpus_documents():
+    """Expose reference corpus documents so advisors can manage linked websites."""
+    return [
+        {
+            "id": document.id,
+            "title": document.title,
+            "url": document.url,
+            "tags": list(document.tags),
+            "content": document.content,
+        }
+        for document in reference_corpus.documents
+    ]
 
 # =====================================================
 # Database setup (SQLite + SQLAlchemy)
@@ -448,7 +482,7 @@ def gmail_status():
     try:
         settings = get_or_create_settings(db)
         creds, email_address = load_gmail_credentials()
-        connected = bool(creds and creds.valid and email_address)
+        connected = bool(creds and email_address)
 
         # Keep email_settings.email_address in sync with Gmail profile
         if connected and email_address and settings.email_address != email_address:
@@ -458,7 +492,7 @@ def gmail_status():
 
         return {
             "connected": connected,
-            "email_address": email_address,
+            "email_address": email_address or settings.email_address,
             "last_synced_at": settings.last_synced_at.isoformat()
             if settings.last_synced_at
             else None,
@@ -524,7 +558,12 @@ def gmail_oauth2callback(request: Request, state: str, code: str):
     oauth_flows.pop(state, None)
 
     # Redirect back to the frontend app
-    return RedirectResponse(url=FRONTEND_URL)
+    redirect_url = FRONTEND_URL
+    if "?" in redirect_url:
+        redirect_url = f"{redirect_url}&tab=settings"
+    else:
+        redirect_url = f"{redirect_url}?tab=settings"
+    return RedirectResponse(url=redirect_url)
 
 
 # =====================================================
@@ -752,7 +791,9 @@ def sync_emails(limit: int = 20):
                 body={"removeLabelIds": ["UNREAD"]},
             ).execute()
 
-        settings.last_synced_at = datetime.utcnow()
+        et_tz = dt_timezone(timedelta(hours=-5))
+        settings.last_synced_at = datetime.now(et_tz).replace(tzinfo=None)
+
         db.add(settings)
         db.commit()
 
@@ -990,29 +1031,40 @@ def respond(
         "confidence": result.confidence,
     }
 
-
 # =====================================================
 # Endpoint: metrics (REAL data from DB)
 # =====================================================
 
+from zoneinfo import ZoneInfo  # Add this import at top of file (Python 3.9+)
+# OR for older Python: from pytz import timezone
 
 @app.get("/metrics")
 def metrics():
     """
     Returns real dashboard statistics computed from the database.
+    Emails today is calculated based on US Eastern timezone calendar day.
     """
     db = SessionLocal()
     try:
         # Total emails
         total = db.query(func.count(EmailORM.id)).scalar() or 0
 
-        # Emails received today (UTC)
-        today = datetime.utcnow().date()
-        start_of_today = datetime(today.year, today.month, today.day)
-
+        # =====================================================
+        # FIXED: Calculate "emails today" based on Eastern Time calendar day
+        # This matches what users see in the UI (ET timezone)
+        # =====================================================
+        eastern = ZoneInfo("America/New_York")
+        now_eastern = datetime.now(eastern)
+        
+        # Start of today in Eastern time
+        start_of_today_eastern = now_eastern.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Convert to UTC for database comparison (assuming received_at is stored in UTC)
+        start_of_today_utc = start_of_today_eastern.astimezone(ZoneInfo("UTC"))
+        
         emails_today = (
             db.query(func.count(EmailORM.id))
-            .filter(EmailORM.received_at >= start_of_today)
+            .filter(EmailORM.received_at >= start_of_today_utc)
             .scalar()
             or 0
         )

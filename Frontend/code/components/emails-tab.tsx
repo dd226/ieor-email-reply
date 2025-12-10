@@ -7,7 +7,13 @@ import AutoSentTable from "@/components/auto-sent-table";
 import { SAMPLE_EMAILS } from "@/components/sample-emails";
 import { CheckSquare, Square, Trash2, Send, Save, X, RotateCcw, Clock, AlertTriangle, RefreshCw, Mail, CheckCircle } from "lucide-react";
 
-type FilterType = "all" | "today";
+// Filter types
+type FilterType = 
+  | "all" 
+  | "today"           // Received Today
+  | "yesterday"       // Received Yesterday  
+  | "thisWeek";       // Received This Week
+
 type EmailStatus = "auto" | "review" | "sent";
 
 export type Email = {
@@ -40,26 +46,42 @@ type SyncResult = {
 
 const BACKEND_URL = "http://127.0.0.1:8000";
 const CONFIDENCE_THRESHOLD_KEY = "confidenceThresholdPct";
+const CONFIDENCE_THRESHOLD_UPDATED_EVENT = "confidence-threshold-updated";
 const DEFAULT_CONFIDENCE_THRESHOLD_PCT = 90; // fallback if nothing saved
 const DRAFTS_STORAGE_KEY = "emailDrafts";
 const AUTO_SYNC_INTERVAL = 60000; // 60 seconds
+
+// ============================================
+// Date parsing helper - must be defined first
+// ============================================
+
+/**
+ * Parse received_at timestamp - backend returns UTC timestamps WITHOUT the Z suffix
+ * e.g., "2025-12-09T20:52:35.589000" is actually UTC, not local time
+ * We need to append 'Z' to tell JavaScript it's UTC
+ */
+function parseReceivedAt(received_at: string): Date {
+  // If already has timezone info, parse as-is
+  if (received_at.endsWith('Z') || received_at.includes('+') || received_at.includes('-', 10)) {
+    return new Date(received_at);
+  }
+  // Otherwise, assume UTC and append Z
+  return new Date(received_at + 'Z');
+}
 
 // Helper to calculate waiting time
 type WaitingTimeInfo = {
   label: string;
   minutes: number;
+  hours: number;
   urgency: "low" | "medium" | "high" | "critical";
 };
 
 function getWaitingTime(received_at: string): WaitingTimeInfo {
-  if (!received_at) return { label: "—", minutes: 0, urgency: "low" };
+  if (!received_at) return { label: "—", minutes: 0, hours: 0, urgency: "low" };
 
-  const iso =
-    received_at.endsWith("Z") || received_at.includes("+")
-      ? received_at
-      : received_at + "Z";
-
-  const received = new Date(iso);
+  // Use parseReceivedAt to handle timestamps without Z suffix
+  const received = parseReceivedAt(received_at);
   const now = new Date();
   let diffMs = now.getTime() - received.getTime();
   if (diffMs < 0) diffMs = 0;
@@ -93,7 +115,54 @@ function getWaitingTime(received_at: string): WaitingTimeInfo {
     urgency = "critical";
   }
 
-  return { label, minutes: diffMinutes, urgency };
+  return { label, minutes: diffMinutes, hours: diffHours, urgency };
+}
+
+// ============================================
+// FIXED: Date comparison helpers - comparing CALENDAR DAYS in LOCAL timezone
+// ============================================
+
+/**
+ * Check if a received_at timestamp was received on today's calendar date (LOCAL time)
+ */
+function isReceivedToday(received_at: string): boolean {
+  const emailDate = parseReceivedAt(received_at);
+  const now = new Date();
+  
+  // Compare year, month, day in local timezone
+  return (
+    emailDate.getFullYear() === now.getFullYear() &&
+    emailDate.getMonth() === now.getMonth() &&
+    emailDate.getDate() === now.getDate()
+  );
+}
+
+/**
+ * Check if a received_at timestamp was received on yesterday's calendar date (LOCAL time)
+ */
+function isReceivedYesterday(received_at: string): boolean {
+  const emailDate = parseReceivedAt(received_at);
+  const now = new Date();
+  
+  // Get yesterday's date
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  
+  // Compare year, month, day in local timezone
+  return (
+    emailDate.getFullYear() === yesterday.getFullYear() &&
+    emailDate.getMonth() === yesterday.getMonth() &&
+    emailDate.getDate() === yesterday.getDate()
+  );
+}
+
+/**
+ * Check if a date string is within the last N days
+ */
+function isWithinLastNDays(received_at: string, days: number): boolean {
+  const received = parseReceivedAt(received_at);
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  return received >= cutoff;
 }
 
 export default function EmailsTab() {
@@ -101,6 +170,7 @@ export default function EmailsTab() {
   const [activeFilter, setActiveFilter] = useState<FilterType>("all");
   const [activeSection, setActiveSection] = useState<"review" | "pending" | "sent">("review");
 
+  const [emails, setEmails] = useState<Email[]>([]);
   const [reviewEmails, setReviewEmails] = useState<Email[]>([]);
   const [pendingEmails, setPendingEmails] = useState<Email[]>([]);
   const [sentEmails, setSentEmails] = useState<Email[]>([]);
@@ -109,7 +179,7 @@ export default function EmailsTab() {
   const [seeding, setSeeding] = useState<boolean>(false);
   const [syncing, setSyncing] = useState<boolean>(false);
   const [sending, setSending] = useState<boolean>(false);
-  const [lastSyncResult, setLastSyncResult] = useState<SyncResult | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
   // detail panel
@@ -117,7 +187,7 @@ export default function EmailsTab() {
   const [replyDraft, setReplyDraft] = useState<string>("");
   const [draftSaved, setDraftSaved] = useState<boolean>(false);
 
-  // metrics from backend
+  // metrics from backend - we'll calculate emails_today ourselves
   const [metrics, setMetrics] = useState<Metrics | null>(null);
 
   // Gmail connection status
@@ -135,13 +205,12 @@ export default function EmailsTab() {
   // Saved drafts (localStorage)
   const [savedDrafts, setSavedDrafts] = useState<Record<number, string>>({});
 
+  // Updated filters
   const filters: { id: FilterType; label: string; description: string }[] = [
     { id: "all", label: "All", description: "Show all emails" },
-    {
-      id: "today",
-      label: "Received Today",
-      description: "Emails received today",
-    },
+    { id: "today", label: "Today", description: "Emails received today" },
+    { id: "yesterday", label: "Yesterday", description: "Emails received yesterday" },
+    { id: "thisWeek", label: "This Week", description: "Emails received in the last 7 days" },
   ];
 
   // Show toast notification
@@ -161,6 +230,51 @@ export default function EmailsTab() {
     if (!Number.isNaN(pct) && pct >= 0 && pct <= 100) {
       setConfidenceThreshold(pct / 100);
     }
+  }, []);
+
+  // --- React to threshold updates from other tabs/windows ---
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const applyThresholdPct = (pct: number) => {
+      if (Number.isNaN(pct)) return;
+      const clamped = Math.min(Math.max(pct, 0), 100);
+      setConfidenceThreshold(clamped / 100);
+    };
+
+    const readAndApply = (raw: string | null) => {
+      if (!raw) {
+        applyThresholdPct(DEFAULT_CONFIDENCE_THRESHOLD_PCT);
+        return;
+      }
+      const pct = Number(raw);
+      if (!Number.isNaN(pct)) {
+        applyThresholdPct(pct);
+      }
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === CONFIDENCE_THRESHOLD_KEY) {
+        readAndApply(event.newValue ?? window.localStorage.getItem(CONFIDENCE_THRESHOLD_KEY));
+      }
+    };
+
+    const handleCustom = (event: Event) => {
+      const detail = (event as CustomEvent<{ pct?: number }>).detail;
+      if (detail && typeof detail.pct === "number") {
+        applyThresholdPct(detail.pct);
+        return;
+      }
+      readAndApply(window.localStorage.getItem(CONFIDENCE_THRESHOLD_KEY));
+    };
+
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener(CONFIDENCE_THRESHOLD_UPDATED_EVENT, handleCustom);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener(CONFIDENCE_THRESHOLD_UPDATED_EVENT, handleCustom);
+    };
   }, []);
 
   // --- Load saved drafts from localStorage ---
@@ -190,6 +304,9 @@ export default function EmailsTab() {
       if (res.ok) {
         const data = await res.json();
         setGmailConnected(data.connected);
+        if (data.last_synced_at) {
+          setLastSyncedAt(data.last_synced_at);
+        }
       }
     } catch (err) {
       console.error("Failed to fetch Gmail status:", err);
@@ -209,11 +326,7 @@ export default function EmailsTab() {
       }
 
       const allEmails: Email[] = await res.json();
-
-      // Split into three categories
-      setReviewEmails(allEmails.filter((e) => e.status === "review"));
-      setPendingEmails(allEmails.filter((e) => e.status === "auto"));
-      setSentEmails(allEmails.filter((e) => e.status === "sent"));
+      setEmails(allEmails);
     } catch (err) {
       console.error(err);
       setError("Could not load emails from backend");
@@ -255,7 +368,7 @@ export default function EmailsTab() {
       }
 
       const data: SyncResult = await res.json();
-      setLastSyncResult(data);
+      setLastSyncedAt(data.last_synced_at ?? new Date().toISOString());
 
       await Promise.all([fetchEmails(), fetchMetrics()]);
 
@@ -559,6 +672,9 @@ export default function EmailsTab() {
             fetchMetrics();
             showToast(`${data.ingested} new email(s) received`, "success");
           }
+          if (data.last_synced_at) {
+            setLastSyncedAt(data.last_synced_at);
+          }
         })
         .catch(console.error);
     }, AUTO_SYNC_INTERVAL);
@@ -566,26 +682,45 @@ export default function EmailsTab() {
     return () => clearInterval(interval);
   }, [gmailConnected, showToast]);
 
-  // --- Helper: calendar "same day" check for Received Today ---
-  function isSameDay(a: Date, b: Date) {
-    return (
-      a.getFullYear() === b.getFullYear() &&
-      a.getMonth() === b.getMonth() &&
-      a.getDate() === b.getDate()
-    );
-  }
+  // --- Categorize emails anytime list or threshold changes ---
+  useEffect(() => {
+    const nextReview: Email[] = [];
+    const nextPending: Email[] = [];
+    const nextSent: Email[] = [];
 
-  // --- Helper: apply filter + search to a list of emails ---
+    emails.forEach((email) => {
+      if (email.status === "sent") {
+        nextSent.push(email);
+        return;
+      }
+
+      if (email.confidence < confidenceThreshold) {
+        nextReview.push(email);
+      } else {
+        nextPending.push(email);
+      }
+    });
+
+    setReviewEmails(nextReview);
+    setPendingEmails(nextPending);
+    setSentEmails(nextSent);
+  }, [emails, confidenceThreshold]);
+
+  // --- FIXED: Helper to apply filter + search to a list of emails ---
   function filterEmails(emails: Email[]): Email[] {
     let filtered = [...emails];
 
-    // Received Today → filter by calendar day
+    // Apply time-based filters
     if (activeFilter === "today") {
-      const today = new Date();
-      filtered = filtered.filter((e) => {
-        const t = new Date(e.received_at);
-        return isSameDay(t, today);
-      });
+      filtered = filtered.filter((e) => isReceivedToday(e.received_at));
+    }
+
+    if (activeFilter === "yesterday") {
+      filtered = filtered.filter((e) => isReceivedYesterday(e.received_at));
+    }
+
+    if (activeFilter === "thisWeek") {
+      filtered = filtered.filter((e) => isWithinLastNDays(e.received_at, 7));
     }
 
     // Text search: student name, UNI, subject
@@ -607,6 +742,10 @@ export default function EmailsTab() {
   const filteredPendingEmails = filterEmails(pendingEmails);
   const filteredSentEmails = filterEmails(sentEmails);
 
+  // Calculate the CORRECT emails today count from all emails
+  const allEmails = emails;
+  const correctEmailsTodayCount = allEmails.filter((e) => isReceivedToday(e.received_at)).length;
+
   // Count selected in current view
   const selectedInView =
     activeSection === "review"
@@ -625,9 +764,21 @@ export default function EmailsTab() {
   const allVisibleSelected = currentEmails.length > 0 && currentEmails.every((e) => selectedIds.has(e.id));
 
   // Check if current email has unsaved changes
-  const hasUnsavedChanges = selectedEmail && replyDraft !== (savedDrafts[selectedEmail.id] ?? selectedEmail.suggested_reply);
+  const hasUnsavedChanges =
+    selectedEmail && replyDraft !== (savedDrafts[selectedEmail.id] ?? selectedEmail.suggested_reply);
+
+  // Determine derived status for selected email relative to threshold
+  const isSelectedEmailPending =
+    !!selectedEmail &&
+    selectedEmail.status !== "sent" &&
+    selectedEmail.confidence >= confidenceThreshold;
+  const isSelectedEmailNeedsReview =
+    !!selectedEmail &&
+    selectedEmail.status !== "sent" &&
+    selectedEmail.confidence < confidenceThreshold;
+  const canEditSelectedEmail = !!selectedEmail && selectedEmail.status !== "sent";
   
-  if (loading && !seeding && reviewEmails.length === 0 && pendingEmails.length === 0 && sentEmails.length === 0) {
+  if (loading && !seeding && emails.length === 0) {
     return (
       <div className="space-y-6">
         <h2 className="text-2xl font-bold text-foreground">Email Management</h2>
@@ -677,7 +828,7 @@ export default function EmailsTab() {
           </p>
         </div>
 
-        {/* Metrics strip */}
+        {/* Metrics strip - use correctEmailsTodayCount instead of backend value */}
         {metrics && (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <div className="rounded-lg border border-border p-3">
@@ -686,19 +837,19 @@ export default function EmailsTab() {
             </div>
             <div className="rounded-lg border border-border p-3">
               <p className="text-xs text-muted-foreground">Emails today</p>
-              <p className="text-xl font-semibold">{metrics.emails_today}</p>
+              <p className="text-xl font-semibold">{correctEmailsTodayCount}</p>
             </div>
             <div className="rounded-lg border border-border p-3">
               <p className="text-xs text-muted-foreground">Needs review</p>
-              <p className="text-xl font-semibold">{metrics.review_count}</p>
+              <p className="text-xl font-semibold">{reviewEmails.length}</p>
             </div>
             <div className="rounded-lg border border-border p-3">
               <p className="text-xs text-muted-foreground">Pending send</p>
-              <p className="text-xl font-semibold">{metrics.auto_count}</p>
+              <p className="text-xl font-semibold">{pendingEmails.length}</p>
             </div>
-            <div className="rounded-lg border border-border p-3 bg-green-50">
+            <div className="rounded-lg border border-border p-3">
               <p className="text-xs text-muted-foreground">Sent</p>
-              <p className="text-xl font-semibold text-green-600">{metrics.sent_count || 0}</p>
+              <p className="text-xl font-semibold">{sentEmails.length}</p>
             </div>
           </div>
         )}
@@ -740,11 +891,21 @@ export default function EmailsTab() {
             {gmailConnected ? "Gmail connected" : "Gmail not connected"}
           </div>
 
-          {lastSyncResult && lastSyncResult.last_synced_at && (
-            <span className="text-xs text-muted-foreground">
-              Last sync: {new Date(lastSyncResult.last_synced_at).toLocaleTimeString()}
-            </span>
-          )}
+        </div>
+
+        <div className="text-xs text-muted-foreground">
+          Last synced:{" "}
+          {lastSyncedAt
+            ? new Date(lastSyncedAt).toLocaleString("en-US", {
+                timeZone: "America/New_York",
+                month: "2-digit",
+                day: "2-digit",
+                year: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: true,
+              })
+            : "Not yet"}
         </div>
 
         {/* Quick Filters */}
@@ -923,6 +1084,10 @@ export default function EmailsTab() {
               onSend={handleApproveAndSend}
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
+              gmailConnected={gmailConnected}
+              sending={sending}
+              savedDrafts={savedDrafts}
+              mode="pending"
             />
           </div>
         )}
@@ -961,6 +1126,8 @@ export default function EmailsTab() {
               onSelect={handleSelect}
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
+              savedDrafts={savedDrafts}
+              mode="sent"
             />
           </div>
         )}
@@ -998,7 +1165,15 @@ export default function EmailsTab() {
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Received:{" "}
-                  {new Date(selectedEmail.received_at).toLocaleString()}
+                  {new Date(selectedEmail.received_at).toLocaleString("en-US", {
+                    timeZone: "America/New_York",
+                    month: "2-digit",
+                    day: "2-digit",
+                    year: "2-digit",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: true,
+                  })}
                 </p>
                 
                 {/* Status badges */}
@@ -1065,7 +1240,7 @@ export default function EmailsTab() {
             <div className="mb-2">
               <div className="flex items-center justify-between mb-1">
                 <h4 className="text-sm font-semibold">AI-suggested reply</h4>
-                {selectedEmail.status === "review" && (
+                {canEditSelectedEmail && (
                   <button
                     onClick={resetToOriginal}
                     className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300 transition-colors"
@@ -1077,8 +1252,8 @@ export default function EmailsTab() {
                 )}
               </div>
 
-              {selectedEmail.status === "review" ? (
-                // Editable textarea when still needing review
+              {canEditSelectedEmail ? (
+                // Editable textarea for any unsent email
                 <textarea
                   className="w-full border border-border rounded-md p-2 text-sm min-h-[160px] resize-vertical focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   value={replyDraft}
@@ -1116,37 +1291,27 @@ export default function EmailsTab() {
 
             {/* Action buttons */}
             <div className="flex flex-wrap gap-2">
-              {/* Approve & Send button - only for review emails */}
-              {selectedEmail.status === "review" && (
-                <>
-                  <button
-                    onClick={async () => {
-                      await handleApproveAndSend(selectedEmail.id, replyDraft);
-                      closeDetail();
-                    }}
-                    disabled={sending || !gmailConnected}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-60"
-                    title={gmailConnected ? "Approve and send reply via Gmail" : "Connect Gmail first"}
-                  >
-                    <Send className="h-4 w-4" />
-                    {sending ? "Sending..." : "Approve & Send"}
-                  </button>
-                  <button
-                    onClick={() => handleSaveDraft(selectedEmail.id, replyDraft)}
-                    disabled={!hasUnsavedChanges}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Save className="h-4 w-4" />
-                    Save Draft
-                  </button>
-                </>
+              {/* Approve & Send button - only for emails below threshold */}
+              {isSelectedEmailNeedsReview && (
+                <button
+                  onClick={async () => {
+                    await handleApproveAndSend(selectedEmail.id, replyDraft);
+                    closeDetail();
+                  }}
+                  disabled={sending || !gmailConnected}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-60"
+                  title={gmailConnected ? "Approve and send reply via Gmail" : "Connect Gmail first"}
+                >
+                  <Send className="h-4 w-4" />
+                  {sending ? "Sending..." : "Approve & Send"}
+                </button>
               )}
 
               {/* Send button for pending send emails */}
-              {selectedEmail.status === "auto" && (
+              {isSelectedEmailPending && (
                 <button
                   onClick={async () => {
-                    await handleApproveAndSend(selectedEmail.id);
+                    await handleApproveAndSend(selectedEmail.id, replyDraft);
                     closeDetail();
                   }}
                   disabled={sending || !gmailConnected}
@@ -1155,6 +1320,18 @@ export default function EmailsTab() {
                 >
                   <Send className="h-4 w-4" />
                   {sending ? "Sending..." : "Send Reply"}
+                </button>
+              )}
+
+              {/* Save draft available for all unsent emails */}
+              {selectedEmail.status !== "sent" && (
+                <button
+                  onClick={() => handleSaveDraft(selectedEmail.id, replyDraft)}
+                  disabled={!hasUnsavedChanges}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Save className="h-4 w-4" />
+                  Save Draft
                 </button>
               )}
 

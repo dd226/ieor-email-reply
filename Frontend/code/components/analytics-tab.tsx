@@ -5,8 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   BarChart,
   Bar,
-  PieChart,
-  Pie,
   Cell,
   XAxis,
   YAxis,
@@ -14,6 +12,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { Clock, AlertTriangle, Send } from "lucide-react";
 
 const BACKEND_URL = "http://127.0.0.1:8000";
 
@@ -21,7 +20,50 @@ const BACKEND_URL = "http://127.0.0.1:8000";
 const CONFIDENCE_THRESHOLD_KEY = "confidenceThresholdPct";
 const DEFAULT_CONFIDENCE_THRESHOLD_PCT = 92;
 
-type EmailStatus = "auto" | "review";
+type Severity = "green" | "yellow" | "red" | "none";
+
+function parseReceivedAt(received_at: string): Date {
+  if (
+    received_at.endsWith("Z") ||
+    received_at.includes("+") ||
+    received_at.includes("-", 10)
+  ) {
+    return new Date(received_at);
+  }
+  return new Date(received_at + "Z");
+}
+
+function formatDurationFromMinutes(minutes: number): string {
+  if (minutes <= 0) return "<1m";
+  const hours = Math.floor(minutes / 60);
+  if (hours < 1) {
+    return `${minutes}m`;
+  }
+  const days = Math.floor(hours / 24);
+  if (hours < 24) {
+    const mins = minutes % 60;
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  }
+  const remHours = hours % 24;
+  return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
+}
+
+function getSeverityFromMinutes(minutes: number): Severity {
+  if (minutes <= 0) return "green";
+  if (minutes <= 12 * 60) return "green";
+  if (minutes <= 24 * 60) return "yellow";
+  return "red";
+}
+
+function getWaitTimeColor(_severity: Severity) {
+  return "text-foreground";
+}
+
+const getConfidenceColor = (_score: number) => {
+  return "text-foreground";
+};
+
+type EmailStatus = "auto" | "review" | "sent";
 
 type Email = {
   id: number;
@@ -32,6 +74,7 @@ type Email = {
   status: EmailStatus;
   suggested_reply: string;
   received_at: string;
+  approved_at?: string | null;
 };
 
 type ConfidenceBucket = {
@@ -40,12 +83,6 @@ type ConfidenceBucket = {
   percentage: number;
 };
 
-type ReviewBucket = {
-  name: string;
-  value: number; // count of emails in this bucket
-  percentage: number; // % of review emails in this bucket
-  color: string;
-};
 
 export default function AnalyticsTab() {
   const [emails, setEmails] = useState<Email[]>([]);
@@ -144,29 +181,7 @@ export default function AnalyticsTab() {
   // --- Review breakdown (REAL: review emails by confidence bucket) ---
   const reviewEmails = emails.filter((e) => e.status === "review");
   const reviewTotal = reviewEmails.length;
-
-  const reviewBucketCounts = new Array(bucketDefs.length).fill(0);
-  for (const e of reviewEmails) {
-    const c = e.confidence ?? 0;
-    let idx = 0;
-    if (c < 0.6) idx = 0;
-    else if (c < 0.8) idx = 1;
-    else if (c < 0.95) idx = 2;
-    else idx = 3;
-    reviewBucketCounts[idx] += 1;
-  }
-
-  const reviewReasons: ReviewBucket[] = bucketDefs.map((b, i) => {
-    const count = reviewBucketCounts[i];
-    const percentage =
-      reviewTotal > 0 ? Math.round((count / reviewTotal) * 100) : 0;
-    return {
-      name: b.label,
-      value: count,
-      percentage,
-      color: getBucketColor(b.label),
-    };
-  });
+  const sentEmails = emails.filter((e) => e.status === "sent");
 
   // --- Key insight numbers (use threshold from Settings) ---
   const effectiveThreshold = thresholdPct / 100; // convert 92 -> 0.92
@@ -178,7 +193,88 @@ export default function AnalyticsTab() {
   const lowConfPercent = total > 0 ? Math.round((lowConfAll / total) * 100) : 0;
 
   const pendingCount = reviewTotal;
-  const pendingPercent = total > 0 ? Math.round((pendingCount / total) * 100) : 0;
+  const sentCount = sentEmails.length;
+  const pendingPercent =
+    total > 0 ? Math.round((pendingCount / total) * 100) : 0;
+  const pendingSendEmails = emails.filter((e) => e.status === "auto");
+  const pendingSendPercent =
+    total > 0 ? Math.round((pendingSendEmails.length / total) * 100) : 0;
+  const sentPercent =
+    total > 0 ? Math.round((sentCount / total) * 100) : 0;
+
+  const avgPendingWait = (() => {
+    if (reviewEmails.length === 0) {
+      return { label: "—", minutes: 0, severity: "none" as Severity };
+    }
+    const now = new Date();
+    let totalMinutes = 0;
+    let count = 0;
+
+    for (const email of reviewEmails) {
+      const received = parseReceivedAt(email.received_at);
+      if (!received) continue;
+      const diffMinutes = Math.max(
+        0,
+        Math.floor((now.getTime() - received.getTime()) / 60000),
+      );
+      totalMinutes += diffMinutes;
+      count++;
+    }
+
+    if (count === 0) {
+      return { label: "—", minutes: 0, severity: "none" as Severity };
+    }
+
+    const avgMinutes = Math.round(totalMinutes / count);
+    return {
+      label: formatDurationFromMinutes(avgMinutes),
+      minutes: avgMinutes,
+      severity: getSeverityFromMinutes(avgMinutes),
+    };
+  })();
+
+  const avgResponseTime = (() => {
+    const completed = sentEmails.filter((email) => email.approved_at);
+    if (completed.length === 0) {
+      return { label: "—", minutes: 0, severity: "none" as Severity };
+    }
+
+    let totalMinutes = 0;
+    let count = 0;
+
+    for (const email of completed) {
+      const received = parseReceivedAt(email.received_at);
+      const approved = parseReceivedAt(email.approved_at!);
+      if (!received || !approved) continue;
+      const diffMinutes = Math.max(
+        0,
+        Math.floor((approved.getTime() - received.getTime()) / 60000),
+      );
+      totalMinutes += diffMinutes;
+      count++;
+    }
+
+    if (count === 0) {
+      return { label: "—", minutes: 0, severity: "none" as Severity };
+    }
+
+    const avgMinutes = Math.round(totalMinutes / count);
+    return {
+      label: formatDurationFromMinutes(avgMinutes),
+      minutes: avgMinutes,
+      severity: getSeverityFromMinutes(avgMinutes),
+    };
+  })();
+
+  const avgConfidenceAll =
+    total > 0
+      ? emails.reduce((sum, e) => sum + (e.confidence ?? 0), 0) / total
+      : 0;
+  const avgSentConfidence =
+    sentEmails.length > 0
+      ? sentEmails.reduce((sum, e) => sum + (e.confidence ?? 0), 0) /
+        sentEmails.length
+      : null;
 
   if (loading && !emails.length && !error) {
     return (
@@ -211,11 +307,12 @@ export default function AnalyticsTab() {
 
   return (
     <div className="space-y-6">
+    <div className="space-y-6">
       {/* Header */}
       <div>
         <h2 className="text-2xl font-bold text-foreground">Analytics</h2>
         <p className="mt-1 text-muted-foreground">
-          Email processing insights and trends (based on real data)
+          Insights and metrics about your email review process
         </p>
       </div>
 
@@ -259,52 +356,92 @@ export default function AnalyticsTab() {
           </CardContent>
         </Card>
 
-        {/* Review Confidence Breakdown */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Review Confidence Breakdown</CardTitle>
-            <p className="mt-1 text-xs text-muted-foreground">
-              How confidence scores are distributed among emails that still need manual review
-            </p>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={reviewReasons}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  outerRadius={100}
-                  dataKey="value"
-                >
-                  {reviewReasons.map((entry) => (
-                    <Cell key={`cell-${entry.name}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(_value, _name, info) =>
-                    `${info?.payload?.percentage ?? 0}%`
-                  }
-                />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="mt-6 space-y-2">
-              {reviewReasons.map((item) => (
-                <div key={item.name} className="flex items-center gap-2">
-                  <div
-                    className="h-3 w-3 rounded-full"
-                    style={{ backgroundColor: item.color }}
-                  />
-                  <span className="text-sm text-foreground">{item.name}</span>
-                  <span className="ml-auto text-sm font-semibold text-muted-foreground">
-                    {item.percentage}%
-                  </span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+        {/* Operational Metrics */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Card className="border shadow-sm hover:shadow-md transition-shadow">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                <Clock className="h-4 w-4" />
+                Avg Pending Wait
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className={`text-2xl font-semibold flex items-center gap-2 ${avgPendingWait.severity !== "none" ? getWaitTimeColor(avgPendingWait.severity) : "text-muted-foreground"}`}>
+                {avgPendingWait.severity === "red" && (
+                  <AlertTriangle className="h-5 w-5" />
+                )}
+                {avgPendingWait.label}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {reviewEmails.length === 0
+                  ? "No emails pending"
+                  : "Average time emails wait in review"}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border shadow-sm hover:shadow-md transition-shadow">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                <Send className="h-4 w-4" />
+                Avg Response Time
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className={`text-2xl font-semibold flex items-center gap-2 ${avgResponseTime.severity !== "none" ? getWaitTimeColor(avgResponseTime.severity) : "text-muted-foreground"}`}>
+                {avgResponseTime.severity === "red" && (
+                  <AlertTriangle className="h-5 w-5" />
+                )}
+                {avgResponseTime.label}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {sentEmails.length === 0
+                  ? "No replies sent yet"
+                  : "Average time to approve + send"}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border shadow-sm hover:shadow-md transition-shadow">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Avg Confidence (All)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className={`text-2xl font-semibold ${getConfidenceColor(avgConfidenceAll)}`}>
+                {(avgConfidenceAll * 100).toFixed(0)}%
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Confidence across all emails
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border shadow-sm hover:shadow-md transition-shadow">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Avg Confidence (Sent)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div
+                className={`text-2xl font-semibold ${
+                  avgSentConfidence !== null
+                    ? getConfidenceColor(avgSentConfidence)
+                    : "text-muted-foreground"
+                }`}
+              >
+                {avgSentConfidence !== null
+                  ? `${(avgSentConfidence * 100).toFixed(0)}%`
+                  : "—"}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Confidence across sent emails
+              </p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       {/* Insights */}
@@ -315,25 +452,37 @@ export default function AnalyticsTab() {
         <CardContent className="space-y-3">
           <div className="flex gap-4">
             <div className="text-3xl font-bold text-blue-600">
-              {lowConfPercent}%
+              {pendingPercent}%
             </div>
             <p className="text-sm text-blue-800">
-              of all emails have confidence below {thresholdPercent}%.
-              You may want to adjust thresholds or expand the knowledge base
-              for these queries.
+              of emails are pending review ({pendingCount} out of {total}).
+              These emails are below your confidence threshold, so they require manual review.
             </p>
           </div>
           <div className="flex gap-4">
             <div className="text-3xl font-bold text-blue-600">
-              {pendingPercent}%
+              {pendingSendPercent}%
             </div>
             <p className="text-sm text-blue-800">
-              of emails are currently pending manual review ({pendingCount} out of {total}).
-              As you approve more replies, this percentage will decrease.
+              of emails are pending send ({pendingSendEmails.length} out of {total}).
+              These emails are above your confidence threshold but auto-send wasn’t enabled, so they await sending.
+            </p>
+          </div>
+          <div className="flex gap-4">
+            <div className="text-3xl font-bold text-blue-600">
+              {sentPercent}%
+            </div>
+            <p className="text-sm text-blue-800">
+              of emails have been sent ({sentCount} out of {total}).
+              These emails were either auto-sent or manually reviewed and approved for sending.
             </p>
           </div>
         </CardContent>
       </Card>
+    </div>
+      <p className="text-xs text-muted-foreground">
+        Adjust your confidence threshold any time from the Settings tab to tune these insights.
+      </p>
     </div>
   );
 }

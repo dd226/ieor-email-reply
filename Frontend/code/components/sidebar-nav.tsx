@@ -10,7 +10,7 @@ interface SidebarNavProps {
 export default function SidebarNav({ activeTab, onTabChange }: SidebarNavProps) {
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "emails", label: "Emails", icon: Mail },
+    { id: "emails", label: "Email Management", icon: Mail },
     { id: "analytics", label: "Analytics", icon: BarChart3 },
     { id: "settings", label: "Settings", icon: Settings },
   ]

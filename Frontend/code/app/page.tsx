@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import SidebarNav from "@/components/sidebar-nav";
 import HeaderTop from "@/components/header-top";
 import MetricsCards from "@/components/metrics-cards";
@@ -8,8 +8,26 @@ import EmailsTab from "@/components/emails-tab";
 import AnalyticsTab from "@/components/analytics-tab";
 import SettingsTab from "@/components/settings-tab";
 
+const VALID_TABS = new Set(["dashboard", "emails", "analytics", "settings"]);
+
 export default function Page() {
   const [activeTab, setActiveTab] = useState("dashboard");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get("tab");
+    if (tab && VALID_TABS.has(tab)) {
+      setActiveTab(tab);
+      params.delete("tab");
+      const newQuery = params.toString();
+      window.history.replaceState(
+        null,
+        "",
+        newQuery ? `?${newQuery}` : window.location.pathname
+      );
+    }
+  }, []);
 
   return (
     <div className="flex h-screen bg-background">

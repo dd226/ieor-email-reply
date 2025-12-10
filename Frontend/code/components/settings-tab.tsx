@@ -55,6 +55,7 @@ type UploadItem = {
 // Email templates
 // ------------------
 const TEMPLATES_KEY = "emailTemplates";
+const SETTINGS_LAST_SAVED_KEY = "emailSettingsLastSavedAt";
 
 type EmailTemplate = {
   id: string;
@@ -124,11 +125,12 @@ export default function SettingsTab() {
     gmail_address: null,
   });
   const [savingEmailSettings, setSavingEmailSettings] = useState(false);
-  const [syncingInbox, setSyncingInbox] = useState(false);
   const [emailSettingsError, setEmailSettingsError] = useState<string | null>(
     null,
   );
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [emailSettingsDirty, setEmailSettingsDirty] = useState(false);
 
   // ---------------------
   // Load all settings on mount
@@ -170,6 +172,13 @@ export default function SettingsTab() {
       } catch {
         console.error("Invalid stored knowledge base uploads");
       }
+    }
+
+    const storedLastSaved = window.localStorage.getItem(
+      SETTINGS_LAST_SAVED_KEY,
+    );
+    if (storedLastSaved) {
+      setLastSavedAt(storedLastSaved);
     }
 
     // Load email templates
@@ -216,6 +225,7 @@ export default function SettingsTab() {
               : thresholdPct,
           last_synced_at: data.last_synced_at ?? prev.last_synced_at,
         }));
+        setEmailSettingsDirty(false);
       })
       .catch(() => {
         setEmailSettings((prev) => ({
@@ -236,8 +246,8 @@ export default function SettingsTab() {
           ...prev,
           gmail_connected: !!data.connected,
           gmail_address: data.email_address ?? null,
-          last_synced_at: data.last_synced_at ?? prev.last_synced_at,
         }));
+        setEmailSettingsDirty(false);
       })
       .catch(() => {
         // If this fails, just treat as "not connected"
@@ -396,7 +406,13 @@ export default function SettingsTab() {
     key: K,
     value: EmailSettingsState[K],
   ) {
-    setEmailSettings((prev) => ({ ...prev, [key]: value }));
+    setEmailSettings((prev) => {
+      if (prev[key] === value) {
+        return prev;
+      }
+      setEmailSettingsDirty(true);
+      return { ...prev, [key]: value };
+    });
   }
 
   async function handleSaveEmailSettings() {
@@ -436,8 +452,13 @@ export default function SettingsTab() {
           typeof data.auto_send_threshold === "number"
             ? Math.round(data.auto_send_threshold * 100)
             : prev.auto_send_threshold,
-        last_synced_at: data.last_synced_at ?? prev.last_synced_at,
       }));
+      setEmailSettingsDirty(false);
+      const timestamp = new Date().toISOString();
+      setLastSavedAt(timestamp);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(SETTINGS_LAST_SAVED_KEY, timestamp);
+      }
     } else {
       // Backend responded but not 2xx – log and move on
       const text = await res.text();
@@ -452,30 +473,6 @@ export default function SettingsTab() {
     setTimeout(() => setSettingsSaved(false), 2000);
   }
 }
-
-  async function handleSyncInbox() {
-    setSyncingInbox(true);
-    setEmailSettingsError(null);
-    try {
-      const res = await fetch(`${BACKEND_URL}/emails/sync`, {
-        method: "POST",
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || "Failed to sync inbox");
-      }
-      const data = await res.json();
-      setEmailSettings((prev) => ({
-        ...prev,
-        last_synced_at:
-          data.last_synced_at ?? new Date().toISOString(),
-      }));
-    } catch (err: any) {
-      setEmailSettingsError(err.message ?? "Unable to sync inbox");
-    } finally {
-      setSyncingInbox(false);
-    }
-  }
 
   async function handleConnectGmail() {
     setEmailSettingsError(null);
@@ -638,28 +635,26 @@ export default function SettingsTab() {
 
             <div className="flex items-center justify-between gap-3 pt-2">
               <div className="text-xs text-muted-foreground">
-                Last synced:{" "}
-                {emailSettings.last_synced_at
-                  ? format(
-                      new Date(emailSettings.last_synced_at),
-                      "MMM d, yyyy h:mm a",
-                    )
-                  : "Never"}
+                Last saved:{" "}
+                {lastSavedAt
+                  ? new Date(lastSavedAt).toLocaleString("en-US", {
+                      timeZone: "America/New_York",
+                      month: "2-digit",
+                      day: "2-digit",
+                      year: "2-digit",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      hour12: true,
+                    })
+                  : "Not yet"}
               </div>
               <div className="flex gap-2">
                 <Button
                   className="bg-blue-600 hover:bg-blue-700"
                   onClick={handleSaveEmailSettings}
-                  disabled={savingEmailSettings}
+                  disabled={savingEmailSettings || !emailSettingsDirty}
                 >
                   {savingEmailSettings ? "Saving..." : "Save Settings"}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleSyncInbox}
-                  disabled={syncingInbox || !emailSettings.gmail_connected}
-                >
-                  {syncingInbox ? "Syncing..." : "Sync Inbox Now"}
                 </Button>
               </div>
             </div>
@@ -833,7 +828,15 @@ export default function SettingsTab() {
                       <p className="text-sm font-medium">{item.name}</p>
                       <p className="text-[11px] text-muted-foreground">
                         Uploaded{" "}
-                        {format(new Date(item.uploadedAt), "MMM d, yyyy h:mm a")}
+                        {new Date(item.uploadedAt).toLocaleString("en-US", {
+                          timeZone: "America/New_York",
+                          month: "2-digit",
+                          day: "2-digit",
+                          year: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hour12: true,
+                        })}
                       </p>
                     </div>
                   </div>

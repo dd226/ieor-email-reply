@@ -1,7 +1,8 @@
 "use client";
 
 import { Email } from "./emails-tab";
-import { CheckSquare, Square, Clock, AlertTriangle } from "lucide-react";
+import { CheckSquare, Square, Clock, AlertTriangle, Send } from "lucide-react";
+import DraftBadge from "./draft-badge";
 
 type ManualReviewTableProps = {
   emails?: Email[];
@@ -25,21 +26,25 @@ function formatReceivedEastern(received_at: string) {
 
   const date = new Date(iso);
 
-  return (
-    date.toLocaleString("en-US", {
-      timeZone: "America/New_York",
-    }) + " ET"
-  );
+  return date.toLocaleString("en-US", {
+    timeZone: "America/New_York",
+    month: "2-digit",
+    day: "2-digit",
+    year: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
 }
 
 type WaitingTimeInfo = {
   label: string;
   minutes: number;
-  urgency: "low" | "medium" | "high" | "critical";
+  severity: "green" | "yellow" | "red";
 };
 
 function getWaitingTime(received_at: string): WaitingTimeInfo {
-  if (!received_at) return { label: "—", minutes: 0, urgency: "low" };
+  if (!received_at) return { label: "—", minutes: 0, severity: "green" };
 
   const iso =
     received_at.endsWith("Z") || received_at.includes("+")
@@ -68,19 +73,17 @@ function getWaitingTime(received_at: string): WaitingTimeInfo {
     label = hours > 0 ? `${diffDays}d ${hours}h` : `${diffDays}d`;
   }
 
-  // Determine urgency level
-  let urgency: "low" | "medium" | "high" | "critical";
-  if (diffHours < 4) {
-    urgency = "low";
-  } else if (diffHours < 12) {
-    urgency = "medium";
-  } else if (diffHours < 24) {
-    urgency = "high";
+  // Determine severity level (shared with other tabs)
+  let severity: WaitingTimeInfo["severity"];
+  if (diffHours <= 12) {
+    severity = "green";
+  } else if (diffHours <= 24) {
+    severity = "yellow";
   } else {
-    urgency = "critical";
+    severity = "red";
   }
 
-  return { label, minutes: diffMinutes, urgency };
+  return { label, minutes: diffMinutes, severity };
 }
 
 export default function ManualReviewTable({
@@ -130,7 +133,7 @@ export default function ManualReviewTable({
                 key={email.id}
                 className={`border-t border-border hover:bg-muted/40 ${
                   isSelected ? "bg-blue-50" : ""
-                } ${waitingTime.urgency === "critical" ? "bg-red-50/50" : ""}`}
+                } ${waitingTime.severity === "red" ? "bg-red-50/50" : ""}`}
               >
                 {onToggleSelect && (
                   <td className="px-3 py-2">
@@ -148,13 +151,9 @@ export default function ManualReviewTable({
                   </td>
                 )}
                 <td className="px-4 py-2">
-                  <div className="flex items-center gap-1.5">
-                    {email.student_name ?? "Unknown"}
-                    {hasDraft && (
-                      <span className="text-amber-500 text-xs" title="Has saved draft">
-                        📝
-                      </span>
-                    )}
+                  <div className="flex items-center gap-1 min-w-0">
+                    <span className="truncate">{email.student_name ?? "Unknown"}</span>
+                    {hasDraft && <DraftBadge />}
                   </div>
                 </td>
 
@@ -163,7 +162,11 @@ export default function ManualReviewTable({
                   {email.uni ?? "—"}
                 </td>
 
-                <td className="px-4 py-2">{email.subject}</td>
+                <td className="px-4 py-2 w-[260px] max-w-[260px]">
+                  <span className="block truncate" title={email.subject}>
+                    {email.subject}
+                  </span>
+                </td>
                 <td className="px-4 py-2">
                   <span
                     className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -184,16 +187,14 @@ export default function ManualReviewTable({
                 <td className="px-4 py-2">
                   <div
                     className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
-                      waitingTime.urgency === "low"
+                      waitingTime.severity === "green"
                         ? "bg-green-100 text-green-800"
-                        : waitingTime.urgency === "medium"
+                        : waitingTime.severity === "yellow"
                         ? "bg-yellow-100 text-yellow-800"
-                        : waitingTime.urgency === "high"
-                        ? "bg-orange-100 text-orange-800"
                         : "bg-red-100 text-red-800"
                     }`}
                   >
-                    {waitingTime.urgency === "critical" ? (
+                    {waitingTime.severity === "red" ? (
                       <AlertTriangle className="h-3 w-3" />
                     ) : (
                       <Clock className="h-3 w-3" />
@@ -214,9 +215,10 @@ export default function ManualReviewTable({
                   </button>
                   <button
                     onClick={() => onApprove(email.id)}
-                    className="px-3 py-1 rounded-md text-xs font-medium bg-green-600 text-white hover:bg-green-700"
+                    className="px-3 py-1 rounded-md text-xs font-medium bg-green-600 text-white hover:bg-green-700 inline-flex items-center gap-1"
                   >
-                    Approve & Send
+                    <Send className="h-3 w-3" />
+                    Send
                   </button>
                   <button
                     onClick={() => onDelete(email.id)}

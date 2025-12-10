@@ -2,6 +2,7 @@
 
 import { Email } from "./emails-tab";
 import { CheckSquare, Square, CheckCircle, Clock, Send } from "lucide-react";
+import DraftBadge from "./draft-badge";
 
 type AutoSentTableProps = {
   emails?: Email[];
@@ -11,47 +12,96 @@ type AutoSentTableProps = {
   onSend?: (id: number) => void;
   selectedIds?: Set<number>;
   onToggleSelect?: (id: number) => void;
+  gmailConnected?: boolean;
+  sending?: boolean;
+  savedDrafts?: Record<number, string>;
+  mode?: "pending" | "sent";
 };
 
-function formatReceivedEastern(received_at: string) {
-  if (!received_at) return "—";
+function formatEastern(timestamp?: string | null) {
+  if (!timestamp) return "—";
 
   // If the string has no timezone info, assume it's UTC and append "Z"
   const iso =
-    received_at.endsWith("Z") || received_at.includes("+")
-      ? received_at
-      : received_at + "Z";
+    timestamp.endsWith("Z") || timestamp.includes("+")
+      ? timestamp
+      : timestamp + "Z";
 
   const date = new Date(iso);
 
   return (
     date.toLocaleString("en-US", {
       timeZone: "America/New_York",
-    }) + " ET"
+      dateStyle: "short",
+      timeStyle: "short",
+    })
   );
 }
 
-type ResponseTimeInfo = {
+type TimeInfo = {
   label: string;
   minutes: number;
-  quality: "excellent" | "good" | "slow" | "very_slow";
+  severity: "green" | "yellow" | "red";
 };
 
-function getResponseTime(received_at: string, approved_at?: string | null): ResponseTimeInfo {
-  if (!received_at || !approved_at) return { label: "—", minutes: 0, quality: "good" };
+function getWaitingTime(received_at: string): TimeInfo {
+  if (!received_at) return { label: "—", minutes: 0, severity: "green" };
 
   const receiveIso =
     received_at.endsWith("Z") || received_at.includes("+")
       ? received_at
       : received_at + "Z";
 
-  const approveIso =
+  const received = new Date(receiveIso);
+  const now = new Date();
+
+  let diffMs = now.getTime() - received.getTime();
+  if (diffMs < 0) diffMs = 0;
+
+  const diffMinutes = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  let label: string;
+  if (diffMinutes < 1) {
+    label = "<1m";
+  } else if (diffMinutes < 60) {
+    label = `${diffMinutes}m`;
+  } else if (diffHours < 24) {
+    const mins = diffMinutes % 60;
+    label = mins > 0 ? `${diffHours}h ${mins}m` : `${diffHours}h`;
+  } else {
+    const hours = diffHours % 24;
+    label = hours > 0 ? `${diffDays}d ${hours}h` : `${diffDays}d`;
+  }
+
+  let severity: TimeInfo["severity"];
+  if (diffHours <= 12) {
+    severity = "green";
+  } else if (diffHours <= 24) {
+    severity = "yellow";
+  } else {
+    severity = "red";
+  }
+
+  return { label, minutes: diffMinutes, severity };
+}
+
+function getResponseTime(received_at: string, approved_at?: string | null): TimeInfo {
+  if (!received_at || !approved_at)
+    return { label: "—", minutes: 0, severity: "green" };
+
+  const receiveIso =
+    received_at.endsWith("Z") || received_at.includes("+")
+      ? received_at
+      : received_at + "Z";
+  const approvedIso =
     approved_at.endsWith("Z") || approved_at.includes("+")
       ? approved_at
       : approved_at + "Z";
 
   const received = new Date(receiveIso);
-  const approved = new Date(approveIso);
+  const approved = new Date(approvedIso);
   let diffMs = approved.getTime() - received.getTime();
   if (diffMs < 0) diffMs = 0;
 
@@ -72,19 +122,16 @@ function getResponseTime(received_at: string, approved_at?: string | null): Resp
     label = hours > 0 ? `${diffDays}d ${hours}h` : `${diffDays}d`;
   }
 
-  // Determine response quality level
-  let quality: "excellent" | "good" | "slow" | "very_slow";
-  if (diffHours < 1) {
-    quality = "excellent";
-  } else if (diffHours < 4) {
-    quality = "good";
-  } else if (diffHours < 24) {
-    quality = "slow";
+  let severity: TimeInfo["severity"];
+  if (diffHours <= 12) {
+    severity = "green";
+  } else if (diffHours <= 24) {
+    severity = "yellow";
   } else {
-    quality = "very_slow";
+    severity = "red";
   }
 
-  return { label, minutes: diffMinutes, quality };
+  return { label, minutes: diffMinutes, severity };
 }
 
 export default function AutoSentTable({
@@ -94,6 +141,10 @@ export default function AutoSentTable({
   onSend,
   selectedIds = new Set(),
   onToggleSelect,
+  gmailConnected = true,
+  sending = false,
+  savedDrafts = {},
+  mode = "pending",
 }: AutoSentTableProps) {
   if (emails.length === 0) {
     return (
@@ -117,16 +168,23 @@ export default function AutoSentTable({
             <th className="px-4 py-2 text-left w-[80px]">UNI</th>
             <th className="px-4 py-2 text-left">Subject</th>
             <th className="px-4 py-2 text-left">Confidence</th>
-            <th className="px-4 py-2 text-left">Response Time</th>
-            <th className="px-4 py-2 text-left">Status</th>
+            <th className="px-4 py-2 text-left">
+              {mode === "sent" ? "Waited" : "Waiting"}
+            </th>
             <th className="px-4 py-2 text-left">Received</th>
+            {mode === "sent" && <th className="px-4 py-2 text-left">Sent</th>}
             <th className="px-4 py-2 text-left">Actions</th>
           </tr>
         </thead>
         <tbody>
           {emails.map((email) => {
             const isSelected = selectedIds.has(email.id);
+            const waitingTime = getWaitingTime(email.received_at);
             const responseTime = getResponseTime(email.received_at, email.approved_at);
+            const timingInfo =
+              mode === "sent"
+                ? responseTime
+                : waitingTime;
 
             return (
               <tr
@@ -151,7 +209,10 @@ export default function AutoSentTable({
                   </td>
                 )}
                 <td className="px-4 py-2">
-                  {email.student_name ?? "Unknown"}
+                  <div className="flex items-center gap-1 min-w-0">
+                    <span className="truncate">{email.student_name ?? "Unknown"}</span>
+                    {savedDrafts[email.id] && <DraftBadge />}
+                  </div>
                 </td>
 
                 {/* UNI column */}
@@ -159,7 +220,11 @@ export default function AutoSentTable({
                   {email.uni ?? "—"}
                 </td>
 
-                <td className="px-4 py-2">{email.subject}</td>
+                <td className="px-4 py-2 w-[260px] max-w-[260px]">
+                  <span className="block truncate" title={email.subject}>
+                    {email.subject}
+                  </span>
+                </td>
                 <td className="px-4 py-2">
                   <span
                     className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -174,50 +239,34 @@ export default function AutoSentTable({
                   </span>
                 </td>
 
-                {/* Response Time Column */}
+                {/* Waiting/Response Time Column */}
                 <td className="px-4 py-2">
-                  {email.approved_at ? (
+                  {(mode === "sent" ? email.approved_at : email.received_at) ? (
                     <div
                       className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
-                        responseTime.quality === "excellent"
+                        timingInfo.severity === "green"
                           ? "bg-green-100 text-green-800"
-                          : responseTime.quality === "good"
-                          ? "bg-blue-100 text-blue-800"
-                          : responseTime.quality === "slow"
+                          : timingInfo.severity === "yellow"
                           ? "bg-yellow-100 text-yellow-800"
-                          : "bg-orange-100 text-orange-800"
+                          : "bg-red-100 text-red-800"
                       }`}
                     >
                       <Clock className="h-3 w-3" />
-                      {responseTime.label}
+                      {timingInfo.label}
                     </div>
                   ) : (
                     <span className="text-muted-foreground">—</span>
                   )}
                 </td>
 
-                {/* Status Column */}
                 <td className="px-4 py-2">
-                  {email.status === "sent" ? (
-                    <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800">
-                      <CheckCircle className="h-3 w-3" />
-                      Sent
-                    </span>
-                  ) : email.status === "auto" ? (
-                    <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800">
-                      <Clock className="h-3 w-3" />
-                      Pending Send
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-800">
-                      {email.status}
-                    </span>
-                  )}
+                  {formatEastern(email.received_at)}
                 </td>
-
-                <td className="px-4 py-2">
-                  {formatReceivedEastern(email.received_at)}
-                </td>
+                {mode === "sent" && (
+                  <td className="px-4 py-2">
+                    {email.approved_at ? formatEastern(email.approved_at) : "—"}
+                  </td>
+                )}
                 <td className="px-4 py-2 flex items-center gap-2">
                   <button
                     onClick={() => onSelect(email)}
@@ -225,13 +274,25 @@ export default function AutoSentTable({
                   >
                     View
                   </button>
-                  {email.status === "auto" && onSend && (
+                  {onSend && (
                     <button
                       onClick={() => onSend(email.id)}
-                      className="px-3 py-1 rounded-md text-xs font-medium bg-green-600 text-white hover:bg-green-700 inline-flex items-center gap-1"
+                      disabled={sending || !gmailConnected}
+                      className={`px-3 py-1 rounded-md text-xs font-medium inline-flex items-center gap-1 ${
+                        sending || !gmailConnected
+                          ? "bg-green-600/50 text-white cursor-not-allowed"
+                          : "bg-green-600 text-white hover:bg-green-700"
+                      }`}
+                      title={
+                        gmailConnected
+                          ? sending
+                            ? "Sending..."
+                            : "Send reply via Gmail"
+                          : "Connect Gmail in Settings first"
+                      }
                     >
                       <Send className="h-3 w-3" />
-                      Send
+                      {sending ? "Sending..." : "Send"}
                     </button>
                   )}
                   <button

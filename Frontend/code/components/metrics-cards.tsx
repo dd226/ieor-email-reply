@@ -12,7 +12,6 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { Clock, AlertTriangle } from "lucide-react";
 
 const BACKEND_URL = "http://127.0.0.1:8000";
 
@@ -32,7 +31,7 @@ type BackendMetrics = {
   avg_auto_confidence: number;
 };
 
-type EmailStatus = "auto" | "review";
+type EmailStatus = "auto" | "review" | "sent";
 
 type Email = {
   id: number;
@@ -43,9 +42,63 @@ type Email = {
   status: EmailStatus;
   suggested_reply: string;
   received_at: string;
+  approved_at?: string | null;
 };
 
 type ChartPoint = { date: string; count: number };
+
+// ============================================
+// FIXED: Proper calendar day comparison in LOCAL timezone
+// ============================================
+
+/**
+ * Parse received_at timestamp - backend returns UTC timestamps WITHOUT the Z suffix
+ * e.g., "2025-12-09T20:52:35.589000" is actually UTC, not local time
+ * We need to append 'Z' to tell JavaScript it's UTC
+ */
+function parseReceivedAt(received_at: string): Date {
+  // If already has timezone info, parse as-is
+  if (received_at.endsWith('Z') || received_at.includes('+') || received_at.includes('-', 10)) {
+    return new Date(received_at);
+  }
+  // Otherwise, assume UTC and append Z
+  return new Date(received_at + 'Z');
+}
+
+/**
+ * Check if two dates are on the same calendar day in LOCAL timezone
+ */
+function isSameLocalDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+/**
+ * Check if an email was received today (LOCAL timezone calendar day)
+ */
+function isReceivedToday(received_at: string): boolean {
+  const emailDate = parseReceivedAt(received_at);
+  const now = new Date();
+  return isSameLocalDay(emailDate, now);
+}
+
+function formatDurationFromMinutes(minutes: number): string {
+  if (minutes <= 0) return "<1m";
+  const hours = Math.floor(minutes / 60);
+  if (hours < 1) {
+    return `${minutes}m`;
+  }
+  const days = Math.floor(hours / 24);
+  if (hours < 24) {
+    const mins = minutes % 60;
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  }
+  const remHours = hours % 24;
+  return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
+}
 
 export default function MetricsCards() {
   const [metrics, setMetrics] = useState<MetricsData | null>(null);
@@ -72,8 +125,11 @@ export default function MetricsCards() {
       const metricsData: BackendMetrics = await metricsRes.json();
       const emailsData: Email[] = await emailsRes.json();
 
+      // Calculate emails today CORRECTLY using local timezone comparison
+      const correctEmailsToday = emailsData.filter((e) => isReceivedToday(e.received_at)).length;
+
       setMetrics({
-        emailsToday: metricsData.emails_today,
+        emailsToday: correctEmailsToday,  // Use our calculated value, not backend's
         autoSent: metricsData.auto_count,
         manualReview: metricsData.review_count,
         avgConfidence: metricsData.avg_confidence ?? 0,
@@ -105,27 +161,21 @@ export default function MetricsCards() {
   };
 
   const reviewEmails = emails.filter((e) => e.status === "review");
+  const pendingSendEmails = emails.filter((e) => e.status === "auto");
+  const sentEmails = emails.filter((e) => e.status === "sent");
 
-  function sameDay(a: Date, b: Date) {
-    return (
-      a.getFullYear() === b.getFullYear() &&
-      a.getMonth() === b.getMonth() &&
-      a.getDate() === b.getDate()
-    );
-  }
-
+  // FIXED: Use parseReceivedAt for chart data building
   function buildDailyData(sourceEmails: Email[]): ChartPoint[] {
     const today = new Date();
     const days: ChartPoint[] = [];
 
     for (let i = 6; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(today.getDate() - i);
+      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
       const label = d.toLocaleDateString(undefined, { weekday: "short" });
 
       const count = sourceEmails.filter((e) => {
-        const t = new Date(e.received_at);
-        return sameDay(t, d);
+        const emailDate = parseReceivedAt(e.received_at);
+        return isSameLocalDay(emailDate, d);
       }).length;
 
       days.push({ date: label, count });
@@ -217,151 +267,31 @@ export default function MetricsCards() {
         )
       : chartData;
 
-  // Helper: parse received_at timestamp
-  const parseReceivedAt = (received_at: string): Date | null => {
-    if (!received_at) return null;
-
-    const iso =
-      received_at.endsWith("Z") || received_at.includes("+")
-        ? received_at
-        : received_at + "Z";
-
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return null;
-    return d;
-  };
-
   // Calculate oldest pending email
   const oldestPendingLabel = (() => {
-    if (reviewEmails.length === 0) return "No emails pending review";
+    if (reviewEmails.length === 0) return "—";
 
     const dates = reviewEmails
       .map((e) => parseReceivedAt(e.received_at))
-      .filter((d): d is Date => d !== null);
+      .filter((d): d is Date => d !== null && !isNaN(d.getTime()));
 
-    if (dates.length === 0) return "Unknown";
+    if (dates.length === 0) return "—";
 
     const now = new Date();
     const oldest = dates.reduce((min, d) => (d < min ? d : min), dates[0]);
 
     let diffMs = now.getTime() - oldest.getTime();
-    if (diffMs < 0) diffMs = 0; // guard against any future timestamps
+    if (diffMs < 0) diffMs = 0;
 
     const diffMinutes = Math.floor(diffMs / 60000);
-
-    if (diffMinutes < 1) return "< 1 min ago";
-    if (diffMinutes < 60) return `${diffMinutes} min ago`;
-
-    const diffHours = Math.floor(diffMinutes / 60);
-    const remMinutes = diffMinutes % 60;
-
-    if (diffHours < 24) {
-      if (remMinutes === 0)
-        return `${diffHours} hr${diffHours === 1 ? "" : "s"} ago`;
-      return `${diffHours} hr${diffHours === 1 ? "" : "s"} ${remMinutes} min ago`;
-    }
-
-    const diffDays = Math.floor(diffHours / 24);
-    return `${diffDays} day${diffDays === 1 ? "" : "s"} ago`;
+    return formatDurationFromMinutes(diffMinutes);
   })();
 
-  // Calculate average wait time for pending emails
-  const avgWaitTimeData = (() => {
-    if (reviewEmails.length === 0) {
-      return { label: "—", minutes: 0, urgency: "none" as const };
-    }
-
-    const now = new Date();
-    let totalMinutes = 0;
-    let count = 0;
-
-    for (const email of reviewEmails) {
-      const received = parseReceivedAt(email.received_at);
-      if (!received) continue;
-
-      let diffMs = now.getTime() - received.getTime();
-      if (diffMs < 0) diffMs = 0;
-      totalMinutes += Math.floor(diffMs / 60000);
-      count++;
-    }
-
-    if (count === 0) return { label: "—", minutes: 0, urgency: "none" as const };
-
-    const avgMinutes = Math.round(totalMinutes / count);
-    const avgHours = Math.floor(avgMinutes / 60);
-    const avgDays = Math.floor(avgHours / 24);
-
-    let label: string;
-    if (avgMinutes < 1) {
-      label = "< 1m";
-    } else if (avgMinutes < 60) {
-      label = `${avgMinutes}m`;
-    } else if (avgHours < 24) {
-      const mins = avgMinutes % 60;
-      label = mins > 0 ? `${avgHours}h ${mins}m` : `${avgHours}h`;
-    } else {
-      const hours = avgHours % 24;
-      label = hours > 0 ? `${avgDays}d ${hours}h` : `${avgDays}d`;
-    }
-
-    // Determine urgency
-    let urgency: "low" | "medium" | "high" | "critical";
-    if (avgHours < 4) {
-      urgency = "low";
-    } else if (avgHours < 12) {
-      urgency = "medium";
-    } else if (avgHours < 24) {
-      urgency = "high";
-    } else {
-      urgency = "critical";
-    }
-
-    return { label, minutes: avgMinutes, urgency };
-  })();
-
-  // Get wait time styling
-  const getWaitTimeColor = (urgency: string) => {
-    switch (urgency) {
-      case "low":
-        return "text-green-600";
-      case "medium":
-        return "text-yellow-600";
-      case "high":
-        return "text-orange-600";
-      case "critical":
-        return "text-red-600";
-      default:
-        return "text-gray-600";
-    }
-  };
-
-  const getWaitTimeBgColor = (urgency: string) => {
-    switch (urgency) {
-      case "low":
-        return "bg-green-100 border-green-200";
-      case "medium":
-        return "bg-yellow-100 border-yellow-200";
-      case "high":
-        return "bg-orange-100 border-orange-200";
-      case "critical":
-        return "bg-red-100 border-red-200";
-      default:
-        return "bg-gray-100 border-gray-200";
-    }
-  };
-
-  // Count urgent emails (waiting > 12 hours)
-  const urgentCount = reviewEmails.filter((email) => {
-    const received = parseReceivedAt(email.received_at);
-    if (!received) return false;
-    const diffHours = (new Date().getTime() - received.getTime()) / (1000 * 60 * 60);
-    return diffHours >= 12;
-  }).length;
 
   if (loading && !metrics && !error) {
     return (
       <div className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[0, 1, 2, 3, 4].map((i) => (
             <Card key={i} className="border border-blue-100 shadow-sm">
               <CardHeader className="pb-3">
@@ -399,14 +329,14 @@ export default function MetricsCards() {
   }
 
   const emailsToday = metrics.emailsToday;
-  const autoSent = metrics.autoSent;
   const manualReview = metrics.manualReview;
-  const avgConfidence = metrics.avgConfidence || 0;
+  const pendingSend = pendingSendEmails.length;
+  const sentCount = sentEmails.length;
 
   return (
     <div className="space-y-4">
       {/* Top Stats */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
 
         {/* Emails Today */}
         <Card className="border border-blue-100 shadow-sm hover:shadow-md transition-shadow">
@@ -417,23 +347,8 @@ export default function MetricsCards() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-blue-600">{emailsToday}</div>
-            <p className="mt-2 text-xs text-muted-foreground">
+            <p className="mt-2 text-xs text-muted-foreground whitespace-nowrap">
               Total emails received today
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Auto-sent */}
-        <Card className="border border-blue-100 shadow-sm hover:shadow-md transition-shadow">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Auto-Sent Emails
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-blue-600">{autoSent}</div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Total emails auto-sent so far
             </p>
           </CardContent>
         </Card>
@@ -448,77 +363,46 @@ export default function MetricsCards() {
           <CardContent>
             <div className="text-3xl font-bold text-blue-600">{manualReview}</div>
 
-            <p className="mt-2 text-xs text-muted-foreground">
+            <p className="mt-2 text-xs text-muted-foreground whitespace-nowrap">
               {manualReview === 0 ? (
                 "No emails pending review"
               ) : (
-                <>
-                  Emails waiting for advisor review.
-                  <br />
-                  Oldest pending: {oldestPendingLabel}
-                </>
+                <>Queue size · Oldest: {oldestPendingLabel}</>
               )}
             </p>
           </CardContent>
         </Card>
 
-        {/* Avg Wait Time - NEW */}
-        <Card
-          className={`border shadow-sm hover:shadow-md transition-shadow ${getWaitTimeBgColor(
-            avgWaitTimeData.urgency
-          )}`}
-        >
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
-              <Clock className="h-4 w-4" />
-              Avg Wait Time
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className={`text-3xl font-bold flex items-center gap-2 ${getWaitTimeColor(avgWaitTimeData.urgency)}`}>
-              {avgWaitTimeData.urgency === "critical" && (
-                <AlertTriangle className="h-6 w-6" />
-              )}
-              {avgWaitTimeData.label}
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              {reviewEmails.length === 0 ? (
-                "No emails pending"
-              ) : urgentCount > 0 ? (
-                <span className="text-red-600 font-medium">
-                  ⚠ {urgentCount} urgent ({">"}12hrs)
-                </span>
-              ) : (
-                "Pending emails avg wait"
-              )}
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Average Confidence */}
-        <Card
-          className={`border shadow-sm hover:shadow-md transition-shadow ${getConfidenceBgColor(
-            avgConfidence,
-          )}`}
-        >
+        {/* Pending Send */}
+        <Card className="border border-blue-100 shadow-sm hover:shadow-md transition-shadow">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Average Confidence
+              Pending Send
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div
-              className={`text-3xl font-bold ${getConfidenceColor(
-                avgConfidence,
-              )}`}
-            >
-              {(avgConfidence * 100).toFixed(0)}%
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              All emails in the system
+            <div className="text-3xl font-bold text-blue-600">{pendingSend}</div>
+            <p className="mt-2 text-xs text-muted-foreground whitespace-nowrap">
+              Approved emails waiting to send
             </p>
           </CardContent>
         </Card>
+
+        {/* Sent */}
+        <Card className="border border-blue-100 shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Sent Emails
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-blue-600">{sentCount}</div>
+            <p className="mt-2 text-xs text-muted-foreground whitespace-nowrap">
+              Replies already delivered
+            </p>
+          </CardContent>
+        </Card>
+
       </div>
 
       {/* Chart */}
