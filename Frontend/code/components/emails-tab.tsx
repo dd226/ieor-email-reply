@@ -437,7 +437,7 @@ export default function EmailsTab() {
       const res = await fetch(`${BACKEND_URL}/emails/${emailId}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reply_text: newReply }),
+        body: JSON.stringify({ reply_text: newReply ?? undefined }),
       });
 
       if (!res.ok) {
@@ -941,7 +941,7 @@ export default function EmailsTab() {
                   title={gmailConnected ? "Approve and send all selected" : "Connect Gmail first"}
                 >
                   <Send className="h-4 w-4" />
-                  Approve & Send All
+                  Send Replies
                 </button>
               )}
               {activeSection === "pending" && (
@@ -1039,7 +1039,7 @@ export default function EmailsTab() {
             <ManualReviewTable
               emails={filteredReviewEmails}
               searchTerm={searchTerm}
-              onApprove={(id) => handleApproveOnly(id)}
+              onApprove={(id) => handleApproveAndSend(id)}
               onDelete={handleDelete}
               onSelect={handleSelect}
               selectedIds={selectedIds}
@@ -1303,7 +1303,7 @@ export default function EmailsTab() {
                   title={gmailConnected ? "Approve and send reply via Gmail" : "Connect Gmail first"}
                 >
                   <Send className="h-4 w-4" />
-                  {sending ? "Sending..." : "Approve & Send"}
+                  {sending ? "Sending..." : "Send"}
                 </button>
               )}
 
@@ -1319,7 +1319,7 @@ export default function EmailsTab() {
                   title={gmailConnected ? "Send reply via Gmail" : "Connect Gmail first"}
                 >
                   <Send className="h-4 w-4" />
-                  {sending ? "Sending..." : "Send Reply"}
+                  {sending ? "Sending..." : "Send"}
                 </button>
               )}
 

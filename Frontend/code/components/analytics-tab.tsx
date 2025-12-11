@@ -375,7 +375,7 @@ export default function AnalyticsTab() {
               <p className="text-xs text-muted-foreground mt-1">
                 {reviewEmails.length === 0
                   ? "No emails pending"
-                  : "Average time emails wait in review"}
+                  : "Average time pending emails currently wait in review"}
               </p>
             </CardContent>
           </Card>

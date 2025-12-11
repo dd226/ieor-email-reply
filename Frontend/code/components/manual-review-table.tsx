@@ -1,7 +1,7 @@
 "use client";
 
 import { Email } from "./emails-tab";
-import { CheckSquare, Square, Clock, AlertTriangle, Send } from "lucide-react";
+import { CheckSquare, Square, Clock, Send } from "lucide-react";
 import DraftBadge from "./draft-badge";
 
 type ManualReviewTableProps = {
@@ -133,7 +133,7 @@ export default function ManualReviewTable({
                 key={email.id}
                 className={`border-t border-border hover:bg-muted/40 ${
                   isSelected ? "bg-blue-50" : ""
-                } ${waitingTime.severity === "red" ? "bg-red-50/50" : ""}`}
+                }`}
               >
                 {onToggleSelect && (
                   <td className="px-3 py-2">
@@ -194,11 +194,7 @@ export default function ManualReviewTable({
                         : "bg-red-100 text-red-800"
                     }`}
                   >
-                    {waitingTime.severity === "red" ? (
-                      <AlertTriangle className="h-3 w-3" />
-                    ) : (
-                      <Clock className="h-3 w-3" />
-                    )}
+                    <Clock className="h-3 w-3" />
                     {waitingTime.label}
                   </div>
                 </td>

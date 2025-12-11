@@ -4,7 +4,7 @@ import base64
 from pathlib import Path
 from datetime import datetime, date
 from enum import Enum
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Sequence, Any
 from datetime import timezone as dt_timezone, timedelta
 from zoneinfo import ZoneInfo
 
@@ -21,6 +21,8 @@ from pydantic import BaseModel, ConfigDict
 from email_advising import (
     EmailAdvisor,
     TfidfRetriever,
+    KnowledgeArticle,
+    KnowledgeBase,
     load_knowledge_base,
     load_reference_corpus,
 )
@@ -41,6 +43,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 # Gmail / OAuth
 from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request as GoogleAuthRequest
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
@@ -90,26 +93,235 @@ retriever = TfidfRetriever(reference_corpus)
 advisor = EmailAdvisor(knowledge_base, retriever=retriever)
 
 
+# =====================================================
+# Knowledge Base CRUD endpoints
+# =====================================================
+
+KB_JSON_PATH = DATA_DIR / "knowledge_base.json"
+RC_JSON_PATH = DATA_DIR / "reference_corpus.json"
+knowledge_base_last_loaded_mtime = (
+    KB_JSON_PATH.stat().st_mtime if KB_JSON_PATH.exists() else None
+)
+reference_corpus_last_loaded_mtime = (
+    RC_JSON_PATH.stat().st_mtime if RC_JSON_PATH.exists() else None
+)
+
+
+def _article_to_dict(article: KnowledgeArticle) -> Dict[str, Any]:
+    return {
+        "id": article.id,
+        "subject": article.subject,
+        "categories": list(article.categories),
+        "utterances": list(article.utterances),
+        "response_template": article.response_template,
+        "follow_up_questions": list(article.follow_up_questions),
+        "metadata": article.metadata or {},
+    }
+
+
+def save_knowledge_base_to_file(articles: Optional[Sequence[KnowledgeArticle]] = None):
+    """Persist the current knowledge_base to JSON file."""
+    global knowledge_base_last_loaded_mtime
+    source = list(articles) if articles is not None else list(knowledge_base.articles)
+    data = [_article_to_dict(article) for article in source]
+    with open(KB_JSON_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    knowledge_base_last_loaded_mtime = KB_JSON_PATH.stat().st_mtime
+
+
+def save_reference_corpus_to_file():
+    """Persist the current reference_corpus to JSON file."""
+    global reference_corpus_last_loaded_mtime
+    data = [
+        {
+            "id": doc.id,
+            "title": doc.title,
+            "url": doc.url,
+            "tags": list(doc.tags),
+            "content": doc.content,
+        }
+        for doc in reference_corpus.documents
+    ]
+    with open(RC_JSON_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    reference_corpus_last_loaded_mtime = RC_JSON_PATH.stat().st_mtime
+
+
+def reload_retriever():
+    """Reload the TF-IDF retriever with current reference corpus."""
+    global retriever
+    retriever = TfidfRetriever(reference_corpus)
+    rebuild_advisor()
+
+
+def rebuild_advisor():
+    """Recreate the EmailAdvisor with the latest knowledge base + corpus."""
+    global advisor
+    advisor = EmailAdvisor(knowledge_base, retriever=retriever)
+
+
+def replace_knowledge_base(articles: List[KnowledgeArticle]):
+    """Swap the in-memory knowledge base and persist it."""
+    global knowledge_base
+    knowledge_base = KnowledgeBase(articles)
+    save_knowledge_base_to_file(articles)
+    rebuild_advisor()
+
+
+def ensure_knowledge_base_is_fresh():
+    """Reload knowledge base if the JSON file changed on disk."""
+    global knowledge_base, knowledge_base_last_loaded_mtime
+    if not KB_JSON_PATH.exists():
+        return
+    current_mtime = KB_JSON_PATH.stat().st_mtime
+    if (
+        knowledge_base_last_loaded_mtime is None
+        or current_mtime > knowledge_base_last_loaded_mtime
+    ):
+        knowledge_base = load_knowledge_base(KB_JSON_PATH)
+        knowledge_base_last_loaded_mtime = current_mtime
+        rebuild_advisor()
+
+
+def ensure_reference_corpus_is_fresh():
+    """Reload the reference corpus from disk if the JSON file changed."""
+    global reference_corpus, reference_corpus_last_loaded_mtime
+    if not RC_JSON_PATH.exists():
+        return
+    current_mtime = RC_JSON_PATH.stat().st_mtime
+    if reference_corpus_last_loaded_mtime is None or current_mtime > reference_corpus_last_loaded_mtime:
+        reference_corpus = load_reference_corpus(RC_JSON_PATH)
+        reference_corpus_last_loaded_mtime = current_mtime
+        reload_retriever()
+
+
 @app.get("/knowledge-base")
 def get_knowledge_base_articles():
     """Expose the current knowledge base articles for the frontend settings view."""
-    return [
-        {
-            "id": article.id,
-            "subject": article.subject,
-            "categories": list(article.categories),
-            "utterances": list(article.utterances),
-            "response_template": article.response_template,
-            "follow_up_questions": list(article.follow_up_questions),
-            "metadata": article.metadata or {},
-        }
-        for article in knowledge_base.articles
-    ]
+    ensure_knowledge_base_is_fresh()
+    return [_article_to_dict(article) for article in knowledge_base.articles]
 
+
+class KBArticleCreate(BaseModel):
+    """Payload to create a new knowledge base article."""
+    id: str
+    subject: str
+    categories: List[str] = []
+    utterances: List[str] = []
+    response_template: str = ""
+    follow_up_questions: List[str] = []
+    metadata: Optional[Dict] = None
+
+
+class KBArticleUpdate(BaseModel):
+    """Payload to update an existing knowledge base article."""
+    subject: Optional[str] = None
+    categories: Optional[List[str]] = None
+    utterances: Optional[List[str]] = None
+    response_template: Optional[str] = None
+    follow_up_questions: Optional[List[str]] = None
+    metadata: Optional[Dict] = None
+
+
+@app.post("/knowledge-base")
+def create_knowledge_base_article(article: KBArticleCreate):
+    """Add a new article to the knowledge base."""
+    ensure_knowledge_base_is_fresh()
+    current_articles = list(knowledge_base.articles)
+    for existing in current_articles:
+        if existing.id == article.id:
+            raise HTTPException(status_code=400, detail=f"Article with id '{article.id}' already exists")
+
+    new_article = KnowledgeArticle(
+        id=article.id,
+        subject=article.subject,
+        categories=list(article.categories),
+        utterances=list(article.utterances),
+        response_template=article.response_template,
+        follow_up_questions=list(article.follow_up_questions),
+        metadata=article.metadata,
+    )
+    current_articles.append(new_article)
+    replace_knowledge_base(current_articles)
+    
+    return {
+        "ok": True,
+        "article": _article_to_dict(new_article),
+    }
+
+
+@app.patch("/knowledge-base/{article_id}")
+def update_knowledge_base_article(article_id: str, update: KBArticleUpdate):
+    """Update an existing knowledge base article."""
+    ensure_knowledge_base_is_fresh()
+    updated_article = None
+    updated_articles: List[KnowledgeArticle] = []
+    for article in knowledge_base.articles:
+        if article.id == article_id:
+            updated_article = KnowledgeArticle(
+                id=article.id,
+                subject=update.subject if update.subject is not None else article.subject,
+                categories=(
+                    list(update.categories)
+                    if update.categories is not None
+                    else list(article.categories)
+                ),
+                utterances=(
+                    list(update.utterances)
+                    if update.utterances is not None
+                    else list(article.utterances)
+                ),
+                response_template=(
+                    update.response_template
+                    if update.response_template is not None
+                    else article.response_template
+                ),
+                follow_up_questions=(
+                    list(update.follow_up_questions)
+                    if update.follow_up_questions is not None
+                    else list(article.follow_up_questions)
+                ),
+                metadata=update.metadata if update.metadata is not None else dict(article.metadata or {}),
+            )
+            updated_articles.append(updated_article)
+        else:
+            updated_articles.append(article)
+
+    if updated_article is None:
+        raise HTTPException(status_code=404, detail=f"Article with id '{article_id}' not found")
+
+    replace_knowledge_base(updated_articles)
+    return {
+        "ok": True,
+        "article": _article_to_dict(updated_article),
+    }
+
+
+@app.delete("/knowledge-base/{article_id}")
+def delete_knowledge_base_article(article_id: str):
+    """Delete an article from the knowledge base."""
+    ensure_knowledge_base_is_fresh()
+    remaining_articles = [article for article in knowledge_base.articles if article.id != article_id]
+    if len(remaining_articles) == len(knowledge_base.articles):
+        raise HTTPException(status_code=404, detail=f"Article with id '{article_id}' not found")
+    if not remaining_articles:
+        raise HTTPException(
+            status_code=400,
+            detail="Knowledge base must contain at least one article.",
+        )
+
+    replace_knowledge_base(remaining_articles)
+    return {"ok": True, "deleted_id": article_id}
+
+
+# =====================================================
+# Reference Corpus CRUD endpoints
+# =====================================================
 
 @app.get("/reference-corpus")
 def get_reference_corpus_documents():
     """Expose reference corpus documents so advisors can manage linked websites."""
+    ensure_reference_corpus_is_fresh()
     return [
         {
             "id": document.id,
@@ -120,6 +332,164 @@ def get_reference_corpus_documents():
         }
         for document in reference_corpus.documents
     ]
+
+
+class RCDocumentCreate(BaseModel):
+    """Payload to create a new reference corpus document."""
+    id: str
+    title: str
+    url: str = ""
+    tags: List[str] = []
+    content: str = ""
+
+
+class RCDocumentUpdate(BaseModel):
+    """Payload to update an existing reference corpus document."""
+    title: Optional[str] = None
+    url: Optional[str] = None
+    tags: Optional[List[str]] = None
+    content: Optional[str] = None
+
+
+@app.post("/reference-corpus")
+def create_reference_corpus_document(doc: RCDocumentCreate):
+    """Add a new document to the reference corpus."""
+    from email_advising.models import ReferenceDocument
+    ensure_reference_corpus_is_fresh()
+    
+    # Check for duplicate ID
+    for existing in reference_corpus.documents:
+        if existing.id == doc.id:
+            raise HTTPException(status_code=400, detail=f"Document with id '{doc.id}' already exists")
+    
+    new_doc = ReferenceDocument(
+        id=doc.id,
+        title=doc.title,
+        url=doc.url,
+        tags=set(doc.tags),
+        content=doc.content,
+    )
+    reference_corpus.documents.append(new_doc)
+    save_reference_corpus_to_file()
+    reload_retriever()  # Rebuild TF-IDF index
+    
+    return {
+        "ok": True,
+        "document": {
+            "id": new_doc.id,
+            "title": new_doc.title,
+            "url": new_doc.url,
+            "tags": list(new_doc.tags),
+            "content": new_doc.content,
+        }
+    }
+
+
+@app.patch("/reference-corpus/{doc_id}")
+def update_reference_corpus_document(doc_id: str, update: RCDocumentUpdate):
+    """Update an existing reference corpus document."""
+    ensure_reference_corpus_is_fresh()
+    for doc in reference_corpus.documents:
+        if doc.id == doc_id:
+            if update.title is not None:
+                doc.title = update.title
+            if update.url is not None:
+                doc.url = update.url
+            if update.tags is not None:
+                doc.tags = set(update.tags)
+            if update.content is not None:
+                doc.content = update.content
+            
+            save_reference_corpus_to_file()
+            reload_retriever()  # Rebuild TF-IDF index
+            
+            return {
+                "ok": True,
+                "document": {
+                    "id": doc.id,
+                    "title": doc.title,
+                    "url": doc.url,
+                    "tags": list(doc.tags),
+                    "content": doc.content,
+                }
+            }
+    
+    raise HTTPException(status_code=404, detail=f"Document with id '{doc_id}' not found")
+
+
+@app.delete("/reference-corpus/{doc_id}")
+def delete_reference_corpus_document(doc_id: str):
+    """Delete a document from the reference corpus."""
+    ensure_reference_corpus_is_fresh()
+    for i, doc in enumerate(reference_corpus.documents):
+        if doc.id == doc_id:
+            reference_corpus.documents.pop(i)
+            save_reference_corpus_to_file()
+            reload_retriever()  # Rebuild TF-IDF index
+            return {"ok": True, "deleted_id": doc_id}
+    
+    raise HTTPException(status_code=404, detail=f"Document with id '{doc_id}' not found")
+
+
+class FetchURLRequest(BaseModel):
+    """Request to fetch content from a URL."""
+    url: str
+
+
+class SendEmailRequest(BaseModel):
+    """Payload to send a manual or edited reply via Gmail."""
+    reply_text: Optional[str] = None
+
+
+@app.post("/fetch-url-content")
+def fetch_url_content(req: FetchURLRequest):
+    """
+    Fetch text content from a URL for adding to the reference corpus.
+    This is a helper endpoint that advisors can use to auto-populate content.
+    """
+    import requests
+    from bs4 import BeautifulSoup
+    
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; EmailAdvisingBot/1.0)"
+        }
+        response = requests.get(req.url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # Remove script and style elements
+        for script in soup(["script", "style", "nav", "footer", "header"]):
+            script.decompose()
+        
+        # Get text
+        text = soup.get_text(separator=" ", strip=True)
+        
+        # Clean up whitespace
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        text = " ".join(chunk for chunk in chunks if chunk)
+        
+        # Truncate if too long
+        if len(text) > 5000:
+            text = text[:5000] + "..."
+        
+        # Try to get page title
+        title = ""
+        if soup.title and soup.title.string:
+            title = soup.title.string.strip()
+        
+        return {
+            "ok": True,
+            "title": title,
+            "content": text,
+            "url": req.url,
+        }
+    except requests.RequestException as e:
+        raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing URL: {str(e)}")
 
 # =====================================================
 # Database setup (SQLite + SQLAlchemy)
@@ -282,7 +652,23 @@ def load_gmail_credentials() -> tuple[Optional[Credentials], Optional[str]]:
     email_address = data.get("email_address")
     creds_info = {k: v for k, v in data.items() if k != "email_address"}
 
-    creds = Credentials.from_authorized_user_info(creds_info, SCOPES)
+    try:
+        creds = Credentials.from_authorized_user_info(creds_info, SCOPES)
+    except Exception:
+        return None, email_address
+
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(GoogleAuthRequest())
+                # Persist refreshed tokens so future loads stay valid
+                if email_address:
+                    save_gmail_credentials(creds, email_address)
+            except Exception:
+                return None, email_address
+        else:
+            return None, email_address
+
     return creds, email_address
 
 
@@ -828,7 +1214,7 @@ def gmail_fetch(limit: int = Query(default=20, description="Max emails to fetch"
 
 
 @app.post("/emails/{email_id}/send")
-def send_email_reply(email_id: int, reply_text: Optional[str] = None):
+def send_email_reply(email_id: int, payload: Optional[SendEmailRequest] = None):
     """
     Send a reply email via Gmail API for the given email.
     Optionally override the reply text.
@@ -861,11 +1247,12 @@ def send_email_reply(email_id: int, reply_text: Optional[str] = None):
                 )
 
         # Use provided reply text or the stored suggested_reply
-        final_reply = reply_text if reply_text is not None else email_obj.suggested_reply
+        new_reply = payload.reply_text if payload else None
+        final_reply = new_reply if new_reply is not None else email_obj.suggested_reply
 
         # Update the suggested_reply if a new one was provided
-        if reply_text is not None:
-            email_obj.suggested_reply = reply_text
+        if new_reply is not None:
+            email_obj.suggested_reply = new_reply
 
         # Send the email
         try:

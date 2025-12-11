@@ -11,9 +11,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { format } from "date-fns";
-import { useEffect, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  Trash2,
+  Plus,
+  Edit2,
+  ExternalLink,
+  ChevronDown,
+  ChevronUp,
+  Globe,
+  BookOpen,
+  X,
+  Check,
+  Loader2,
+} from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 const BACKEND_URL = "http://127.0.0.1:8000";
 
@@ -27,6 +39,7 @@ const DEFAULT_CONFIDENCE_THRESHOLD_PCT = 92;
 // Advisor profile storage
 // ---------------------
 const PROFILE_KEY = "advisorProfile";
+const SETTINGS_LAST_SAVED_KEY = "emailSettingsLastSavedAt";
 
 type AdvisorProfile = {
   name: string;
@@ -41,80 +54,78 @@ const DEFAULT_PROFILE: AdvisorProfile = {
 };
 
 // ---------------------
-// Knowledge base uploads
+// Knowledge base types (from backend)
 // ---------------------
-const KB_UPLOADS_KEY = "knowledgeBaseUploads";
-
-type UploadItem = {
+type KBArticle = {
   id: string;
-  name: string;
-  uploadedAt: string; // ISO
+  subject: string;
+  categories: string[];
+  utterances: string[];
+  response_template: string;
+  follow_up_questions: string[];
+  metadata?: Record<string, any>;
 };
 
 // ---------------------
-// Email templates
-// ------------------
-const TEMPLATES_KEY = "emailTemplates";
-const SETTINGS_LAST_SAVED_KEY = "emailSettingsLastSavedAt";
-
-type EmailTemplate = {
+// Reference corpus types (from backend)
+// ---------------------
+type RCDocument = {
   id: string;
-  name: string;
-  body: string;
-  uses: number;
+  title: string;
+  url: string;
+  tags: string[];
+  content: string;
 };
-
-const DEFAULT_TEMPLATES: EmailTemplate[] = [
-  {
-    id: "course-withdrawal",
-    name: "Course Withdrawal",
-    body:
-      "Hello {student_name},\n\nTo withdraw from a course after the drop deadline, you'll need to submit a Course Withdrawal form via Student Services Online (SSOL) and speak with an academic advisor. Please be aware that a withdrawal may impact your financial aid, visa status (if applicable), and time to degree completion.\n\nOnce processed, your transcript will record a grade of 'W'.\n\nBest,\nAcademic Advising Team",
-    uses: 24,
-  },
-  {
-    id: "financial-aid-inquiry",
-    name: "Financial Aid Inquiry",
-    body:
-      "Hello {student_name},\n\nFor questions about your financial aid status, package, or disbursement, the best resource is the Financial Aid Office. You can review your current aid information in NetPartner and schedule an appointment with a financial aid counselor through their website.\n\nIf your question also affects course planning or enrollment, feel free to follow up with us so we can coordinate with Financial Aid on your behalf.\n\nBest,\nAcademic Advising Team",
-    uses: 18,
-  },
-  {
-    id: "grade-appeal",
-    name: "Grade Appeal",
-    body:
-      "Hello {student_name},\n\nIf you believe there is an error in your final course grade, the first step is to contact your instructor directly to request clarification. If, after speaking with the instructor, you still feel the grade is inaccurate, you may follow the department's formal grade appeal process.\n\nPolicies and timelines for appeals can be found on the Academic Policies page.\n\nBest,\nAcademic Advising Team",
-    uses: 12,
-  },
-];
 
 // ---------------------
 // Email client (Gmail API via OAuth) settings
 // ---------------------
 type EmailSettingsState = {
   auto_send_enabled: boolean;
-  auto_send_threshold: number; // percent 0–100 (shared with other tabs)
+  auto_send_threshold: number;
   last_synced_at: string | null;
   gmail_connected: boolean;
   gmail_address: string | null;
 };
 
 export default function SettingsTab() {
+  const { toast } = useToast();
+
   // Profile state
   const [profile, setProfile] = useState<AdvisorProfile>(DEFAULT_PROFILE);
   const [profileDirty, setProfileDirty] = useState(false);
 
-  // Knowledge base uploads
-  const [uploads, setUploads] = useState<UploadItem[]>([]);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Knowledge Base state (from backend)
+  const [kbArticles, setKbArticles] = useState<KBArticle[]>([]);
+  const [kbLoading, setKbLoading] = useState(true);
+  const [kbExpanded, setKbExpanded] = useState<string | null>(null);
+  const [kbEditing, setKbEditing] = useState<string | null>(null);
+  const [kbEditData, setKbEditData] = useState<Partial<KBArticle>>({});
+  const [kbAdding, setKbAdding] = useState(false);
+  const [kbNewData, setKbNewData] = useState<Partial<KBArticle>>({
+    id: "",
+    subject: "",
+    categories: [],
+    utterances: [],
+    response_template: "",
+    follow_up_questions: [],
+  });
 
-  // Email templates
-  const [templates, setTemplates] = useState<EmailTemplate[]>([]);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editName, setEditName] = useState("");
-  const [editBody, setEditBody] = useState("");
+  // Reference Corpus state (from backend)
+  const [rcDocs, setRcDocs] = useState<RCDocument[]>([]);
+  const [rcLoading, setRcLoading] = useState(true);
+  const [rcExpanded, setRcExpanded] = useState<string | null>(null);
+  const [rcEditing, setRcEditing] = useState<string | null>(null);
+  const [rcEditData, setRcEditData] = useState<Partial<RCDocument>>({});
+  const [rcAdding, setRcAdding] = useState(false);
+  const [rcNewData, setRcNewData] = useState<Partial<RCDocument>>({
+    id: "",
+    title: "",
+    url: "",
+    tags: [],
+    content: "",
+  });
+  const [fetchingUrl, setFetchingUrl] = useState(false);
 
   // Email client / Gmail OAuth settings
   const [emailSettings, setEmailSettings] = useState<EmailSettingsState>({
@@ -125,9 +136,7 @@ export default function SettingsTab() {
     gmail_address: null,
   });
   const [savingEmailSettings, setSavingEmailSettings] = useState(false);
-  const [emailSettingsError, setEmailSettingsError] = useState<string | null>(
-    null,
-  );
+  const [emailSettingsError, setEmailSettingsError] = useState<string | null>(null);
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [emailSettingsDirty, setEmailSettingsDirty] = useState(false);
@@ -139,9 +148,7 @@ export default function SettingsTab() {
     if (typeof window === "undefined") return;
 
     // Shared auto-send threshold used by other tabs
-    const storedThreshold = window.localStorage.getItem(
-      CONFIDENCE_THRESHOLD_KEY,
-    );
+    const storedThreshold = window.localStorage.getItem(CONFIDENCE_THRESHOLD_KEY);
     let thresholdPct = DEFAULT_CONFIDENCE_THRESHOLD_PCT;
     if (storedThreshold) {
       const value = Number(storedThreshold);
@@ -163,40 +170,9 @@ export default function SettingsTab() {
       setProfile(DEFAULT_PROFILE);
     }
 
-    // Load KB uploads
-    const storedUploads = window.localStorage.getItem(KB_UPLOADS_KEY);
-    if (storedUploads) {
-      try {
-        const parsed = JSON.parse(storedUploads) as UploadItem[];
-        setUploads(parsed);
-      } catch {
-        console.error("Invalid stored knowledge base uploads");
-      }
-    }
-
-    const storedLastSaved = window.localStorage.getItem(
-      SETTINGS_LAST_SAVED_KEY,
-    );
+    const storedLastSaved = window.localStorage.getItem(SETTINGS_LAST_SAVED_KEY);
     if (storedLastSaved) {
       setLastSavedAt(storedLastSaved);
-    }
-
-    // Load email templates
-    const storedTemplates = window.localStorage.getItem(TEMPLATES_KEY);
-    if (storedTemplates) {
-      try {
-        const parsed = JSON.parse(storedTemplates) as EmailTemplate[];
-        if (parsed.length > 0) {
-          setTemplates(parsed);
-        } else {
-          setTemplates(DEFAULT_TEMPLATES);
-        }
-      } catch {
-        console.error("Invalid stored email templates");
-        setTemplates(DEFAULT_TEMPLATES);
-      }
-    } else {
-      setTemplates(DEFAULT_TEMPLATES);
     }
 
     // Load email settings (auto-send + threshold) best-effort
@@ -252,7 +228,298 @@ export default function SettingsTab() {
       .catch(() => {
         // If this fails, just treat as "not connected"
       });
+
+    // Load Knowledge Base from backend
+    loadKnowledgeBase();
+
+    // Load Reference Corpus from backend
+    loadReferenceCorpus();
   }, []);
+
+  // ---------------------
+  // Knowledge Base API functions
+  // ---------------------
+  async function loadKnowledgeBase() {
+    setKbLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/knowledge-base`);
+      if (res.ok) {
+        const data = await res.json();
+        setKbArticles(data);
+      }
+    } catch (err) {
+      console.error("Failed to load knowledge base:", err);
+    } finally {
+      setKbLoading(false);
+    }
+  }
+
+  async function handleAddKbArticle() {
+    if (!kbNewData.id || !kbNewData.subject) {
+      toast({
+        title: "Validation Error",
+        description: "ID and Subject are required",
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      const res = await fetch(`${BACKEND_URL}/knowledge-base`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: kbNewData.id,
+          subject: kbNewData.subject,
+          categories: kbNewData.categories || [],
+          utterances: kbNewData.utterances || [],
+          response_template: kbNewData.response_template || "",
+          follow_up_questions: kbNewData.follow_up_questions || [],
+        }),
+      });
+      if (res.ok) {
+        toast({ title: "Success", description: "Article added to knowledge base" });
+        setKbAdding(false);
+        setKbNewData({
+          id: "",
+          subject: "",
+          categories: [],
+          utterances: [],
+          response_template: "",
+          follow_up_questions: [],
+        });
+        loadKnowledgeBase();
+      } else {
+        const err = await res.json();
+        toast({
+          title: "Error",
+          description: err.detail || "Failed to add article",
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to add article",
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function handleUpdateKbArticle(articleId: string) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/knowledge-base/${articleId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(kbEditData),
+      });
+      if (res.ok) {
+        toast({ title: "Success", description: "Article updated" });
+        setKbEditing(null);
+        setKbEditData({});
+        loadKnowledgeBase();
+      } else {
+        const err = await res.json();
+        toast({
+          title: "Error",
+          description: err.detail || "Failed to update article",
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to update article",
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function handleDeleteKbArticle(articleId: string) {
+    if (!confirm("Are you sure you want to delete this article?")) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/knowledge-base/${articleId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        toast({ title: "Success", description: "Article deleted" });
+        loadKnowledgeBase();
+      } else {
+        toast({
+          title: "Error",
+          description: "Failed to delete article",
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to delete article",
+        variant: "destructive",
+      });
+    }
+  }
+
+  // ---------------------
+  // Reference Corpus API functions
+  // ---------------------
+  async function loadReferenceCorpus() {
+    setRcLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/reference-corpus`);
+      if (res.ok) {
+        const data = await res.json();
+        setRcDocs(data);
+      }
+    } catch (err) {
+      console.error("Failed to load reference corpus:", err);
+    } finally {
+      setRcLoading(false);
+    }
+  }
+
+  async function handleFetchUrlContent() {
+    if (!rcNewData.url) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a URL first",
+        variant: "destructive",
+      });
+      return;
+    }
+    setFetchingUrl(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/fetch-url-content`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: rcNewData.url }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRcNewData((prev) => ({
+          ...prev,
+          title: data.title || prev.title,
+          content: data.content || prev.content,
+          id:
+            prev.id ||
+            data.title?.toLowerCase().replace(/\s+/g, "_").slice(0, 50) ||
+            "",
+        }));
+        toast({ title: "Success", description: "Content fetched from URL" });
+      } else {
+        const err = await res.json();
+        toast({
+          title: "Error",
+          description: err.detail || "Failed to fetch URL",
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to fetch URL content",
+        variant: "destructive",
+      });
+    } finally {
+      setFetchingUrl(false);
+    }
+  }
+
+  async function handleAddRcDocument() {
+    if (!rcNewData.id || !rcNewData.title) {
+      toast({
+        title: "Validation Error",
+        description: "ID and Title are required",
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      const res = await fetch(`${BACKEND_URL}/reference-corpus`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: rcNewData.id,
+          title: rcNewData.title,
+          url: rcNewData.url || "",
+          tags: rcNewData.tags || [],
+          content: rcNewData.content || "",
+        }),
+      });
+      if (res.ok) {
+        toast({ title: "Success", description: "Document added to reference corpus" });
+        setRcAdding(false);
+        setRcNewData({ id: "", title: "", url: "", tags: [], content: "" });
+        loadReferenceCorpus();
+      } else {
+        const err = await res.json();
+        toast({
+          title: "Error",
+          description: err.detail || "Failed to add document",
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to add document",
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function handleUpdateRcDocument(docId: string) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/reference-corpus/${docId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(rcEditData),
+      });
+      if (res.ok) {
+        toast({ title: "Success", description: "Document updated" });
+        setRcEditing(null);
+        setRcEditData({});
+        loadReferenceCorpus();
+      } else {
+        const err = await res.json();
+        toast({
+          title: "Error",
+          description: err.detail || "Failed to update document",
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to update document",
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function handleDeleteRcDocument(docId: string) {
+    if (!confirm("Are you sure you want to delete this document?")) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/reference-corpus/${docId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        toast({ title: "Success", description: "Document deleted" });
+        loadReferenceCorpus();
+      } else {
+        toast({
+          title: "Error",
+          description: "Failed to delete document",
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to delete document",
+        variant: "destructive",
+      });
+    }
+  }
 
   // ---------------------
   // Profile interactions
@@ -267,212 +534,83 @@ export default function SettingsTab() {
 
   function saveProfile() {
     if (typeof window === "undefined") return;
-
     window.localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
     setProfileDirty(false);
-
-    // Let header-top know
     window.dispatchEvent(
-      new CustomEvent("advisor-profile-updated", { detail: profile }),
+      new CustomEvent("advisor-profile-updated", { detail: profile })
     );
-  }
-
-  // ---------------------
-  // Knowledge Base interactions
-  // ---------------------
-  function persistUploads(next: UploadItem[]) {
-    setUploads(next);
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(KB_UPLOADS_KEY, JSON.stringify(next));
-  }
-
-  function handleFilesSelected(fileList: FileList | null) {
-    if (!fileList || fileList.length === 0) return;
-
-    const now = new Date();
-    const newItems: UploadItem[] = [];
-    let errorMsg: string | null = null;
-
-    Array.from(fileList).forEach((file) => {
-      const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-      if (ext !== "json" && ext !== "txt" && ext !== "md" && ext !== "pdf") {
-        errorMsg =
-          "Only .json, .txt, .md, or .pdf files are currently supported.";
-        return;
-      }
-
-      newItems.push({
-        id: `${now.getTime()}-${Math.random().toString(36).slice(2)}`,
-        name: file.name,
-        uploadedAt: now.toISOString(),
-      });
-    });
-
-    if (errorMsg) {
-      setUploadError(errorMsg);
-    } else {
-      setUploadError(null);
-    }
-
-    if (newItems.length > 0) {
-      const merged = [...newItems, ...uploads].slice(0, 10);
-      persistUploads(merged);
-    }
-  }
-
-  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-    handleFilesSelected(e.dataTransfer.files);
-  }
-
-  function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!isDragging) {
-      setIsDragging(true);
-    }
-  }
-
-  function handleDragLeave(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (isDragging) {
-      setIsDragging(false);
-    }
-  }
-
-  function handleClearUploads() {
-    persistUploads([]);
-  }
-
-  // ---------------------
-  // Email Templates interactions
-  // ---------------------
-  function persistTemplates(next: EmailTemplate[]) {
-    setTemplates(next);
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(TEMPLATES_KEY, JSON.stringify(next));
-  }
-
-  function startEditingTemplate(template: EmailTemplate) {
-    setEditingId(template.id);
-    setEditName(template.name);
-    setEditBody(template.body);
-  }
-
-  function cancelEditingTemplate() {
-    setEditingId(null);
-    setEditName("");
-    setEditBody("");
-  }
-
-  function saveEditingTemplate() {
-    if (!editingId) return;
-    const next = templates.map((t) =>
-      t.id === editingId ? { ...t, name: editName, body: editBody } : t,
-    );
-    persistTemplates(next);
-    cancelEditingTemplate();
-  }
-
-  function handleAddTemplate() {
-    const newTemplate: EmailTemplate = {
-      id: `template-${Date.now().toString(36)}`,
-      name: "New Template",
-      body:
-        "Hello {student_name},\n\nThank you for reaching out. [Add your response here.]\n\nBest,\nAcademic Advising Team",
-      uses: 0,
-    };
-    const next = [newTemplate, ...templates];
-    persistTemplates(next);
-    startEditingTemplate(newTemplate);
-  }
-
-  function handleDeleteTemplate(id: string) {
-    const next = templates.filter((t) => t.id !== id);
-    persistTemplates(next);
-    if (editingId === id) {
-      cancelEditingTemplate();
-    }
+    toast({ title: "Success", description: "Profile updated" });
   }
 
   // ---------------------
   // Email Client settings interactions (Gmail OAuth)
   // ---------------------
-  
   function updateEmailSettings<K extends keyof EmailSettingsState>(
     key: K,
-    value: EmailSettingsState[K],
+    value: EmailSettingsState[K]
   ) {
     setEmailSettings((prev) => {
-      if (prev[key] === value) {
-        return prev;
-      }
+      if (prev[key] === value) return prev;
       setEmailSettingsDirty(true);
       return { ...prev, [key]: value };
     });
   }
 
   async function handleSaveEmailSettings() {
-  setSavingEmailSettings(true);
-  setEmailSettingsError(null);
-  setSettingsSaved(false);
+    setSavingEmailSettings(true);
+    setEmailSettingsError(null);
+    setSettingsSaved(false);
 
-  // Always save threshold locally so other tabs (Dashboard / Emails) see it
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(
-      CONFIDENCE_THRESHOLD_KEY,
-      String(emailSettings.auto_send_threshold),
-    );
-  }
-
-  try {
-    const payload: any = {
-      auto_send_enabled: emailSettings.auto_send_enabled,
-      auto_send_threshold: emailSettings.auto_send_threshold / 100,
-    };
-
-    const res = await fetch(`${BACKEND_URL}/email-settings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      setEmailSettings((prev) => ({
-        ...prev,
-        auto_send_enabled:
-          typeof data.auto_send_enabled === "boolean"
-            ? data.auto_send_enabled
-            : prev.auto_send_enabled,
-        auto_send_threshold:
-          typeof data.auto_send_threshold === "number"
-            ? Math.round(data.auto_send_threshold * 100)
-            : prev.auto_send_threshold,
-      }));
-      setEmailSettingsDirty(false);
-      const timestamp = new Date().toISOString();
-      setLastSavedAt(timestamp);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(SETTINGS_LAST_SAVED_KEY, timestamp);
-      }
-    } else {
-      // Backend responded but not 2xx – log and move on
-      const text = await res.text();
-      console.error("Failed to update /email-settings:", text);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        CONFIDENCE_THRESHOLD_KEY,
+        String(emailSettings.auto_send_threshold)
+      );
     }
-  } catch (err) {
-    // Network / CORS / browser weirdness – don't spam the UI
-    console.error("Error calling /email-settings:", err);
-  } finally {
-    setSavingEmailSettings(false);
-    setSettingsSaved(true);
-    setTimeout(() => setSettingsSaved(false), 2000);
+
+    try {
+      const payload: any = {
+        auto_send_enabled: emailSettings.auto_send_enabled,
+        auto_send_threshold: emailSettings.auto_send_threshold / 100,
+      };
+
+      const res = await fetch(`${BACKEND_URL}/email-settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setEmailSettings((prev) => ({
+          ...prev,
+          auto_send_enabled:
+            typeof data.auto_send_enabled === "boolean"
+              ? data.auto_send_enabled
+              : prev.auto_send_enabled,
+          auto_send_threshold:
+            typeof data.auto_send_threshold === "number"
+              ? Math.round(data.auto_send_threshold * 100)
+              : prev.auto_send_threshold,
+        }));
+        setEmailSettingsDirty(false);
+        const timestamp = new Date().toISOString();
+        setLastSavedAt(timestamp);
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(SETTINGS_LAST_SAVED_KEY, timestamp);
+        }
+      } else {
+        const text = await res.text();
+        console.error("Failed to update /email-settings:", text);
+      }
+    } catch (err) {
+      console.error("Error calling /email-settings:", err);
+    } finally {
+      setSavingEmailSettings(false);
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 2000);
+    }
   }
-}
 
   async function handleConnectGmail() {
     setEmailSettingsError(null);
@@ -484,15 +622,12 @@ export default function SettingsTab() {
       }
       const data = await res.json();
       if (data.auth_url) {
-        // Redirect to Google's OAuth consent screen
         window.location.href = data.auth_url;
       } else {
         throw new Error("auth_url missing from backend response");
       }
     } catch (err: any) {
-      setEmailSettingsError(
-        err?.message ?? "Unable to open Gmail authorization",
-      );
+      setEmailSettingsError(err?.message ?? "Unable to open Gmail authorization");
     }
   }
 
@@ -506,7 +641,6 @@ export default function SettingsTab() {
         const text = await res.text();
         throw new Error(text || "Failed to disconnect Gmail");
       }
-      // Clear local Gmail status
       setEmailSettings((prev) => ({
         ...prev,
         gmail_connected: false,
@@ -516,6 +650,16 @@ export default function SettingsTab() {
     } catch (err: any) {
       setEmailSettingsError(err?.message ?? "Unable to disconnect Gmail");
     }
+  }
+
+  // ---------------------
+  // Helper: Parse comma-separated string to array
+  // ---------------------
+  function parseCommaSeparated(str: string): string[] {
+    return str
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
   }
 
   // ---------------------
@@ -531,31 +675,24 @@ export default function SettingsTab() {
         </p>
       </div>
 
-      {/* 4 cards in a 2x2 layout on md+ */}
+      {/* Core settings first: email + profile */}
       <div className="grid gap-6 md:grid-cols-2">
         {/* Email Client Integration (Gmail OAuth + auto-send threshold) */}
-        <Card>
-          <CardHeader className="flex flex-row items-start justify-between">
-            <div>
-              <CardTitle>Email Client Integration</CardTitle>
-              <CardDescription>
-                Connect a Gmail inbox via OAuth and control auto-send behavior.
-              </CardDescription>
-            </div>
-            {settingsSaved && (
-              <span className="text-xs font-semibold text-green-600">
-                Settings saved
-              </span>
-            )}
+        <Card className="flex flex-col h-full">
+          <CardHeader>
+            <CardTitle>Email Client Integration</CardTitle>
+            <CardDescription className="mt-1">
+              Connect a Gmail inbox via OAuth and control auto-send behavior.
+            </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-4 flex flex-col flex-1">
             {emailSettingsError && (
               <p className="text-xs text-red-600 whitespace-pre-line">
                 {emailSettingsError}
               </p>
             )}
 
-            <div className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-2">
+            <div className="flex flex-col gap-3 rounded-md bg-gray-50 px-3 py-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="text-sm font-medium">
                   {emailSettings.gmail_connected
@@ -563,12 +700,12 @@ export default function SettingsTab() {
                     : "Not connected to Gmail"}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {emailSettings.gmail_connected
-                    ? emailSettings.gmail_address || "Gmail account connected"
+                  {emailSettings.gmail_connected && emailSettings.gmail_address
+                    ? emailSettings.gmail_address
                     : "Use your Google account to authorize access via OAuth."}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
                 <Button
                   variant={emailSettings.gmail_connected ? "outline" : "default"}
                   className={
@@ -597,8 +734,8 @@ export default function SettingsTab() {
               <div>
                 <p className="text-sm font-medium">Auto-send replies</p>
                 <p className="text-xs text-muted-foreground">
-                  When enabled, high-confidence replies will be sent
-                  automatically from the connected Gmail account.
+                  When enabled, high-confidence replies will be sent automatically
+                  from the connected Gmail account.
                 </p>
               </div>
               <Switch
@@ -613,8 +750,9 @@ export default function SettingsTab() {
               <label className="text-sm font-medium">
                 Auto-send confidence threshold
               </label>
-              <div className="mt-2 flex items-center gap-3">
+              <div className="mt-2 flex items-center gap-2 sm:gap-3">
                 <Slider
+                  className="flex-1"
                   value={[emailSettings.auto_send_threshold]}
                   onValueChange={([v]) =>
                     updateEmailSettings("auto_send_threshold", v)
@@ -623,7 +761,7 @@ export default function SettingsTab() {
                   min={50}
                   step={1}
                 />
-                <span className="text-sm font-semibold text-blue-600">
+                <span className="w-12 text-right text-sm font-semibold text-blue-600">
                   {emailSettings.auto_send_threshold}%
                 </span>
               </div>
@@ -633,7 +771,7 @@ export default function SettingsTab() {
               </p>
             </div>
 
-            <div className="flex items-center justify-between gap-3 pt-2">
+            <div className="mt-auto pt-4 flex items-center justify-between gap-3">
               <div className="text-xs text-muted-foreground">
                 Last saved:{" "}
                 {lastSavedAt
@@ -648,7 +786,12 @@ export default function SettingsTab() {
                     })
                   : "Not yet"}
               </div>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-3">
+                {settingsSaved && (
+                  <span className="text-xs font-semibold text-green-600">
+                    Settings saved
+                  </span>
+                )}
                 <Button
                   className="bg-blue-600 hover:bg-blue-700"
                   onClick={handleSaveEmailSettings}
@@ -661,249 +804,754 @@ export default function SettingsTab() {
           </CardContent>
         </Card>
 
-        {/* Email Templates */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Email Templates</CardTitle>
-            <CardDescription>Manage response templates</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2 max-h-56 overflow-y-auto">
-              {templates.map((template) => (
-                <div
-                  key={template.id}
-                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-foreground">
-                      {template.name}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Used {template.uses} times
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => startEditingTemplate(template)}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8 text-muted-foreground"
-                      onClick={() => handleDeleteTemplate(template.id)}
-                      aria-label={`Delete ${template.name}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-
-              {templates.length === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  No templates yet. Add one below.
-                </p>
-              )}
-            </div>
-
-            {editingId && (
-              <div className="mt-4 border rounded-lg p-4 space-y-3 bg-gray-50">
-                <p className="text-xs font-semibold text-muted-foreground uppercase">
-                  Edit Template
-                </p>
-                <div>
-                  <label className="text-xs font-medium text-foreground">
-                    Template Name
-                  </label>
-                  <Input
-                    className="mt-1"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-foreground">
-                    Template Body
-                  </label>
-                  <textarea
-                    className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    rows={6}
-                    value={editBody}
-                    onChange={(e) => setEditBody(e.target.value)}
-                  />
-                  <p className="text-[11px] text-muted-foreground mt-1">
-                    You can use placeholders like{" "}
-                    <code className="font-mono">{`{student_name}`}</code> in the
-                    body.
-                  </p>
-                </div>
-                <div className="flex gap-2 justify-end">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={cancelEditingTemplate}
-                  >
-                    Cancel
-                  </Button>
-                  <Button size="sm" onClick={saveEditingTemplate}>
-                    Save
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            {!editingId && (
-              <Button
-                className="bg-blue-600 hover:bg-blue-700"
-                variant="default"
-                onClick={handleAddTemplate}
-              >
-                Add Template
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Knowledge Base Uploads */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Knowledge Base</CardTitle>
-            <CardDescription>
-              Track which knowledge base files are currently in use.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div
-              className={`border-2 border-dashed rounded-lg p-4 text-center text-sm transition-colors ${
-                isDragging
-                  ? "border-blue-500 bg-blue-50"
-                  : "border-border bg-muted/40"
-              }`}
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDragEnd={handleDragLeave}
-            >
-              <p className="font-medium">
-                Drag and drop files here to update the knowledge base
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                JSON, TXT, MD, or PDF files. This is a visual tracker only; file
-                content is managed separately.
-              </p>
-              <div className="mt-3">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  Choose Files
-                </Button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => handleFilesSelected(e.target.files)}
-                />
-              </div>
-            </div>
-
-            {uploadError && (
-              <p className="text-xs text-red-600">{uploadError}</p>
-            )}
-
-            <div className="space-y-2">
-              {uploads.length > 0 ? (
-                uploads.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex items-center justify-between p-2 rounded-md bg-gray-50"
-                  >
-                    <div>
-                      <p className="text-sm font-medium">{item.name}</p>
-                      <p className="text-[11px] text-muted-foreground">
-                        Uploaded{" "}
-                        {new Date(item.uploadedAt).toLocaleString("en-US", {
-                          timeZone: "America/New_York",
-                          month: "2-digit",
-                          day: "2-digit",
-                          year: "2-digit",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          hour12: true,
-                        })}
-                      </p>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  No recent knowledge base uploads tracked yet.
-                </p>
-              )}
-            </div>
-
-            {uploads.length > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs"
-                onClick={handleClearUploads}
-              >
-                Clear Upload History
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-
         {/* Advisor Profile */}
-        <Card>
+        <Card className="flex flex-col h-full">
           <CardHeader>
             <CardTitle>Advisor Profile</CardTitle>
-            <CardDescription>
+            <CardDescription className="mt-1">
               This information is shown in signatures and in the app header.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <label className="text-sm font-medium">Name</label>
-              <Input
-                className="mt-2"
-                value={profile.name}
-                onChange={updateField("name")}
-              />
+          <CardContent className="flex flex-col flex-1">
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium">Name</label>
+                <Input
+                  className="mt-2"
+                  value={profile.name}
+                  onChange={updateField("name")}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Email</label>
+                <Input
+                  className="mt-2"
+                  value={profile.email}
+                  onChange={updateField("email")}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Department</label>
+                <Input
+                  className="mt-2"
+                  value={profile.department}
+                  onChange={updateField("department")}
+                />
+              </div>
             </div>
-            <div>
-              <label className="text-sm font-medium">Email</label>
-              <Input
-                className="mt-2"
-                value={profile.email}
-                onChange={updateField("email")}
-              />
+            <div className="mt-auto pt-4">
+              <Button
+                className="bg-blue-600 hover:bg-blue-700"
+                onClick={saveProfile}
+                disabled={!profileDirty}
+              >
+                {profileDirty ? "Update Profile" : "Profile Updated"}
+              </Button>
             </div>
-            <div>
-              <label className="text-sm font-medium">Department</label>
-              <Input
-                className="mt-2"
-                value={profile.department}
-                onChange={updateField("department")}
-              />
-            </div>
-            <Button
-              className="bg-blue-600 hover:bg-blue-700"
-              onClick={saveProfile}
-              disabled={!profileDirty}
-            >
-              {profileDirty ? "Update Profile" : "Profile Updated"}
-            </Button>
           </CardContent>
         </Card>
       </div>
+
+      {/* Knowledge Base Card - Full Width */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <BookOpen className="h-5 w-5 text-blue-600" />
+              <div>
+                <CardTitle>Knowledge Base</CardTitle>
+                <CardDescription>
+                  Manage Q&A articles that power AI responses ({kbArticles.length}{" "}
+                  articles)
+                </CardDescription>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              className="bg-blue-600 hover:bg-blue-700"
+              onClick={() => setKbAdding(true)}
+            >
+              <Plus className="h-4 w-4 mr-1" /> Add Article
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {kbLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <>
+              {/* Add New Article Form */}
+              {kbAdding && (
+                <div className="border rounded-lg p-4 space-y-3 bg-blue-50 mb-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-blue-800">
+                      Add New Article
+                    </p>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setKbAdding(false)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-medium">
+                        ID (unique identifier)
+                      </label>
+                      <Input
+                        className="mt-1"
+                        placeholder="e.g., course_registration"
+                        value={kbNewData.id || ""}
+                        onChange={(e) =>
+                          setKbNewData({ ...kbNewData, id: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium">Subject</label>
+                      <Input
+                        className="mt-1"
+                        placeholder="e.g., Course Registration Help"
+                        value={kbNewData.subject || ""}
+                        onChange={(e) =>
+                          setKbNewData({ ...kbNewData, subject: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium">
+                      Categories (comma-separated)
+                    </label>
+                    <Input
+                      className="mt-1"
+                      placeholder="e.g., registration, courses"
+                      value={(kbNewData.categories || []).join(", ")}
+                      onChange={(e) =>
+                        setKbNewData({
+                          ...kbNewData,
+                          categories: parseCommaSeparated(e.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium">
+                      Utterances / Keywords (comma-separated)
+                    </label>
+                    <Input
+                      className="mt-1"
+                      placeholder="e.g., how to register, enroll in class"
+                      value={(kbNewData.utterances || []).join(", ")}
+                      onChange={(e) =>
+                        setKbNewData({
+                          ...kbNewData,
+                          utterances: parseCommaSeparated(e.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium">Response Template</label>
+                    <textarea
+                      className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      rows={4}
+                      placeholder="Hello {student_name},..."
+                      value={kbNewData.response_template || ""}
+                      onChange={(e) =>
+                        setKbNewData({
+                          ...kbNewData,
+                          response_template: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setKbAdding(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="bg-blue-600 hover:bg-blue-700"
+                      onClick={handleAddKbArticle}
+                    >
+                      <Check className="h-4 w-4 mr-1" /> Add Article
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Article List */}
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {kbArticles.map((article) => (
+                  <div key={article.id} className="border rounded-lg bg-gray-50">
+                    <div
+                      className="flex items-center justify-between p-3 cursor-pointer hover:bg-gray-100"
+                      onClick={() =>
+                        setKbExpanded(
+                          kbExpanded === article.id ? null : article.id
+                        )
+                      }
+                    >
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">{article.subject}</p>
+                        <p className="text-xs text-muted-foreground">
+                          ID: {article.id} • {article.categories.length} categories
+                          • {article.utterances.length} utterances
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setKbEditing(article.id);
+                            setKbExpanded(article.id);
+                            setKbEditData({
+                              subject: article.subject,
+                              categories: article.categories,
+                              utterances: article.utterances,
+                              response_template: article.response_template,
+                              follow_up_questions: article.follow_up_questions,
+                            });
+                          }}
+                        >
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-red-600 hover:text-red-700"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteKbArticle(article.id);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                        {kbExpanded === article.id ? (
+                          <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Expanded Content */}
+                    {kbExpanded === article.id && (
+                      <div className="px-3 pb-3 pt-1 border-t space-y-2">
+                        {kbEditing === article.id ? (
+                          // Edit Mode
+                          <div className="space-y-3">
+                            <div>
+                              <label className="text-xs font-medium">Subject</label>
+                              <Input
+                                className="mt-1"
+                                value={kbEditData.subject || ""}
+                                onChange={(e) =>
+                                  setKbEditData({
+                                    ...kbEditData,
+                                    subject: e.target.value,
+                                  })
+                                }
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium">
+                                Categories
+                              </label>
+                              <Input
+                                className="mt-1"
+                                value={(kbEditData.categories || []).join(", ")}
+                                onChange={(e) =>
+                                  setKbEditData({
+                                    ...kbEditData,
+                                    categories: parseCommaSeparated(e.target.value),
+                                  })
+                                }
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium">
+                                Utterances
+                              </label>
+                              <Input
+                                className="mt-1"
+                                value={(kbEditData.utterances || []).join(", ")}
+                                onChange={(e) =>
+                                  setKbEditData({
+                                    ...kbEditData,
+                                    utterances: parseCommaSeparated(e.target.value),
+                                  })
+                                }
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium">
+                                Response Template
+                              </label>
+                              <textarea
+                                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                rows={4}
+                                value={kbEditData.response_template || ""}
+                                onChange={(e) =>
+                                  setKbEditData({
+                                    ...kbEditData,
+                                    response_template: e.target.value,
+                                  })
+                                }
+                              />
+                            </div>
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setKbEditing(null);
+                                  setKbEditData({});
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="bg-blue-600 hover:bg-blue-700"
+                                onClick={() => handleUpdateKbArticle(article.id)}
+                              >
+                                Save Changes
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          // View Mode
+                          <>
+                            <div>
+                              <p className="text-xs font-medium text-muted-foreground">
+                                Categories:
+                              </p>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {article.categories.map((cat, idx) => (
+                                  <span
+                                    key={`${cat}-${idx}`}
+                                    className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded"
+                                  >
+                                    {cat}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                            <div>
+                              <p className="text-xs font-medium text-muted-foreground">
+                                Utterances:
+                              </p>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {article.utterances.slice(0, 5).map((utt, idx) => (
+                                  <span
+                                    key={`${utt}-${idx}`}
+                                    className="text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded"
+                                  >
+                                    {utt}
+                                  </span>
+                                ))}
+                                {article.utterances.length > 5 && (
+                                  <span className="text-xs text-muted-foreground">
+                                    +{article.utterances.length - 5} more
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div>
+                              <p className="text-xs font-medium text-muted-foreground">
+                                Response Preview:
+                              </p>
+                              <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap line-clamp-3">
+                                {article.response_template.slice(0, 200)}
+                                {article.response_template.length > 200 && "..."}
+                              </p>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {kbArticles.length === 0 && !kbLoading && (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    No knowledge base articles yet. Add one to get started.
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Reference Corpus Card - Full Width */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Globe className="h-5 w-5 text-green-600" />
+              <div>
+                <CardTitle>Reference Corpus</CardTitle>
+                <CardDescription>
+                  Manage source documents and websites for context ({rcDocs.length}{" "}
+                  documents)
+                </CardDescription>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              className="bg-green-600 hover:bg-green-700"
+              onClick={() => setRcAdding(true)}
+            >
+              <Plus className="h-4 w-4 mr-1" /> Add Document
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {rcLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <>
+              {/* Add New Document Form */}
+              {rcAdding && (
+                <div className="border rounded-lg p-4 space-y-3 bg-green-50 mb-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-green-800">
+                      Add New Document
+                    </p>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setRcAdding(false)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  {/* URL Fetch Section */}
+                  <div className="bg-white rounded-md p-3 border">
+                    <label className="text-xs font-medium flex items-center gap-1">
+                      <Globe className="h-3 w-3" /> Fetch from URL (optional)
+                    </label>
+                    <div className="flex gap-2 mt-1">
+                      <Input
+                        placeholder="https://example.com/page"
+                        value={rcNewData.url || ""}
+                        onChange={(e) =>
+                          setRcNewData({ ...rcNewData, url: e.target.value })
+                        }
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleFetchUrlContent}
+                        disabled={fetchingUrl || !rcNewData.url}
+                      >
+                        {fetchingUrl ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          "Fetch"
+                        )}
+                      </Button>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Enter a URL and click Fetch to auto-populate title and content
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-medium">
+                        ID (unique identifier)
+                      </label>
+                      <Input
+                        className="mt-1"
+                        placeholder="e.g., registrar_deadlines"
+                        value={rcNewData.id || ""}
+                        onChange={(e) =>
+                          setRcNewData({ ...rcNewData, id: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium">Title</label>
+                      <Input
+                        className="mt-1"
+                        placeholder="e.g., Registration Deadlines"
+                        value={rcNewData.title || ""}
+                        onChange={(e) =>
+                          setRcNewData({ ...rcNewData, title: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium">
+                      Tags (comma-separated)
+                    </label>
+                    <Input
+                      className="mt-1"
+                      placeholder="e.g., registration, deadlines, fall"
+                      value={(rcNewData.tags || []).join(", ")}
+                      onChange={(e) =>
+                        setRcNewData({
+                          ...rcNewData,
+                          tags: parseCommaSeparated(e.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium">Content</label>
+                    <textarea
+                      className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      rows={4}
+                      placeholder="Paste or type the reference content here..."
+                      value={rcNewData.content || ""}
+                      onChange={(e) =>
+                        setRcNewData({ ...rcNewData, content: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setRcAdding(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="bg-green-600 hover:bg-green-700"
+                      onClick={handleAddRcDocument}
+                    >
+                      <Check className="h-4 w-4 mr-1" /> Add Document
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Document List */}
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {rcDocs.map((doc) => (
+                  <div key={doc.id} className="border rounded-lg bg-gray-50">
+                    <div
+                      className="flex items-center justify-between p-3 cursor-pointer hover:bg-gray-100"
+                      onClick={() =>
+                        setRcExpanded(rcExpanded === doc.id ? null : doc.id)
+                      }
+                    >
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium">{doc.title}</p>
+                          {doc.url && (
+                            <a
+                              href={doc.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          ID: {doc.id} • {doc.tags.length} tags •{" "}
+                          {doc.content.length} chars
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRcEditing(doc.id);
+                            setRcExpanded(doc.id);
+                            setRcEditData({
+                              title: doc.title,
+                              url: doc.url,
+                              tags: doc.tags,
+                              content: doc.content,
+                            });
+                          }}
+                        >
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-red-600 hover:text-red-700"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteRcDocument(doc.id);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                        {rcExpanded === doc.id ? (
+                          <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Expanded Content */}
+                    {rcExpanded === doc.id && (
+                      <div className="px-3 pb-3 pt-1 border-t space-y-2">
+                        {rcEditing === doc.id ? (
+                          // Edit Mode
+                          <div className="space-y-3">
+                            <div>
+                              <label className="text-xs font-medium">Title</label>
+                              <Input
+                                className="mt-1"
+                                value={rcEditData.title || ""}
+                                onChange={(e) =>
+                                  setRcEditData({
+                                    ...rcEditData,
+                                    title: e.target.value,
+                                  })
+                                }
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium">URL</label>
+                              <Input
+                                className="mt-1"
+                                value={rcEditData.url || ""}
+                                onChange={(e) =>
+                                  setRcEditData({
+                                    ...rcEditData,
+                                    url: e.target.value,
+                                  })
+                                }
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium">Tags</label>
+                              <Input
+                                className="mt-1"
+                                value={(rcEditData.tags || []).join(", ")}
+                                onChange={(e) =>
+                                  setRcEditData({
+                                    ...rcEditData,
+                                    tags: parseCommaSeparated(e.target.value),
+                                  })
+                                }
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium">Content</label>
+                              <textarea
+                                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                rows={4}
+                                value={rcEditData.content || ""}
+                                onChange={(e) =>
+                                  setRcEditData({
+                                    ...rcEditData,
+                                    content: e.target.value,
+                                  })
+                                }
+                              />
+                            </div>
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setRcEditing(null);
+                                  setRcEditData({});
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="bg-green-600 hover:bg-green-700"
+                                onClick={() => handleUpdateRcDocument(doc.id)}
+                              >
+                                Save Changes
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          // View Mode
+                          <>
+                            {doc.url && (
+                              <div>
+                                <p className="text-xs font-medium text-muted-foreground">
+                                  URL:
+                                </p>
+                                <a
+                                  href={doc.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-blue-600 hover:underline break-all"
+                                >
+                                  {doc.url}
+                                </a>
+                              </div>
+                            )}
+                            <div>
+                              <p className="text-xs font-medium text-muted-foreground">
+                                Tags:
+                              </p>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {doc.tags.map((tag, idx) => (
+                                  <span
+                                    key={`${tag}-${idx}`}
+                                    className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded"
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                            <div>
+                              <p className="text-xs font-medium text-muted-foreground">
+                                Content Preview:
+                              </p>
+                              <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap line-clamp-3">
+                                {doc.content.slice(0, 300)}
+                                {doc.content.length > 300 && "..."}
+                              </p>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {rcDocs.length === 0 && !rcLoading && (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    No reference documents yet. Add one to get started.
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
     </div>
   );
 }

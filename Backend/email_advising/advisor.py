@@ -1,6 +1,7 @@
 """Core advising logic for generating automated email responses."""
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Optional, Protocol
 
 from .knowledge_base import KnowledgeBase
@@ -114,50 +115,125 @@ class EmailAdvisor:
         """
         raw_query_tokens = tokenize(query)
         query_tokens = augment_tokens(raw_query_tokens)
-        raw_token_set = set(raw_query_tokens)
+        sentence_tokens = [
+            tokenize(segment)
+            for segment in re.split(r"[.!?]+", query)
+            if segment.strip()
+        ]
+        if not sentence_tokens:
+            sentence_tokens = [raw_query_tokens]
+        query_token_sets: List[set[str]] = []
+        augmented_query_sets: List[set[str]] = []
+        for tokens in sentence_tokens:
+            if not tokens:
+                continue
+            qset = set(tokens)
+            if not qset:
+                continue
+            query_token_sets.append(qset)
+            augmented_query_sets.append(set(augment_tokens(tokens)))
+        if not query_token_sets:
+            base_set = set(raw_query_tokens)
+            query_token_sets = [base_set]
+            augmented_query_sets = [set(augment_tokens(raw_query_tokens))]
         
-        # TF-IDF gives us semantic similarity using augmented tokens
+        # TF-IDF gives us semantic similarity using augmented tokens.
+        # Consider the full email and each sentence, taking the max similarity per article.
         scores = self.vectorizer.similarities(query_tokens)
+        sentence_augmented = [augment_tokens(tokens) for tokens in sentence_tokens if tokens]
+        for tokens in sentence_augmented:
+            sent_scores = self.vectorizer.similarities(tokens)
+            scores = [max(base, sent) for base, sent in zip(scores, sent_scores)]
+
         ranked: List[RankedMatch] = []
         
         for idx, (article, tfidf_score) in enumerate(zip(self.knowledge_base.articles, scores)):
             utterance_token_lists = self._utterance_token_sets[idx]
+            utterance_augmented_sets = [
+                set(augment_tokens(ut)) if ut else set() for ut in utterance_token_lists
+            ]
             
             # Check for exact token match (user query exactly matches an utterance)
-            exact_match = any(ut == raw_query_tokens for ut in utterance_token_lists if ut)
+            exact_match = any(
+                ut == sentence
+                for ut in utterance_token_lists
+                for sentence in sentence_tokens
+                if ut and sentence
+            )
             
             # Calculate best Jaccard similarity with any utterance using RAW tokens only
             # This measures phrase/pattern matching without semantic augmentation
             best_utterance_similarity = 0.0
-            if raw_token_set:
-                for utterance_tokens in utterance_token_lists:
+            best_query_coverage = 0.0
+            best_utterance_coverage = 0.0
+            for qset, aug_qset in zip(query_token_sets, augmented_query_sets):
+                for utterance_tokens, utter_aug in zip(utterance_token_lists, utterance_augmented_sets):
                     if not utterance_tokens:
                         continue
                     utterance_set = set(utterance_tokens)
-                    intersection = len(raw_token_set & utterance_set)
-                    union = len(raw_token_set | utterance_set)
-                    jaccard = intersection / union if union > 0 else 0.0
-                    best_utterance_similarity = max(best_utterance_similarity, jaccard)
+                    union_raw = len(qset | utterance_set)
+                    if union_raw:
+                        intersection_raw = len(qset & utterance_set)
+                        jaccard_raw = intersection_raw / union_raw
+                        best_utterance_similarity = max(best_utterance_similarity, jaccard_raw)
+                        if len(qset) > 0:
+                            query_cov = intersection_raw / len(qset)
+                            best_query_coverage = max(best_query_coverage, query_cov)
+                        if len(utterance_set) > 0:
+                            utt_cov = intersection_raw / len(utterance_set)
+                            best_utterance_coverage = max(best_utterance_coverage, utt_cov)
+                    if aug_qset and utter_aug:
+                        union_aug = len(aug_qset | utter_aug)
+                        if union_aug:
+                            intersection_aug = len(aug_qset & utter_aug)
+                            jaccard_aug = intersection_aug / union_aug
+                            best_utterance_similarity = max(best_utterance_similarity, jaccard_aug)
+                            if len(qset) > 0:
+                                query_cov = min(intersection_aug, len(qset)) / len(qset)
+                                best_query_coverage = max(best_query_coverage, query_cov)
+                            if len(utterance_set) > 0:
+                                utt_cov = min(intersection_aug, len(utterance_set)) / len(utterance_set)
+                                best_utterance_coverage = max(best_utterance_coverage, utt_cov)
             
-            # Apply explicit confidence thresholds based on utterance match quality
-            # This ensures high-quality matches get appropriate confidence scores
+            # Compute additional overlaps for nuanced scoring
+            article_tokens = self._article_token_sets[idx]
+            category_tokens = self._category_token_sets[idx]
+            article_overlap = 0.0
+            category_overlap = 0.0
+            for aug_qset in augmented_query_sets:
+                if not aug_qset:
+                    continue
+                article_union = len(aug_qset | article_tokens)
+                if article_union:
+                    article_overlap = max(article_overlap, len(aug_qset & article_tokens) / article_union)
+                category_union = len(aug_qset | category_tokens)
+                if category_union:
+                    category_overlap = max(
+                        category_overlap, len(aug_qset & category_tokens) / category_union
+                    )
+
+            # Blend semantic (TF-IDF) and lexical overlaps. Prioritize the strongest signals
             if exact_match:
                 confidence = 1.0
-            elif best_utterance_similarity >= 0.70:
-                # Strong pattern match: 70%+ token overlap → 92% confidence minimum
-                confidence = max(tfidf_score, 0.92)
-            elif best_utterance_similarity >= 0.50:
-                # Good pattern match: 50%+ token overlap → 75% confidence minimum
-                confidence = max(tfidf_score, 0.75)
-            elif best_utterance_similarity >= 0.30:
-                # Moderate pattern match: 30%+ token overlap → 60% confidence minimum
-                confidence = max(tfidf_score, 0.60)
             else:
-                # No strong pattern match: use TF-IDF score as-is
-                confidence = tfidf_score
-            
-            # Ensure confidence stays in valid range
-            confidence = min(confidence, 1.0)
+                coverage_signal = (best_query_coverage + best_utterance_coverage) / 2
+                base_confidence = (
+                    0.5 * best_utterance_similarity
+                    + 0.2 * coverage_signal
+                    + 0.2 * tfidf_score
+                    + 0.1 * category_overlap
+                )
+                if coverage_signal < 0.15 and best_utterance_similarity < 0.2:
+                    base_confidence *= 0.6
+                confidence = min(max(base_confidence, 0.05), 0.97)
+                if best_utterance_similarity >= 0.85:
+                    confidence = max(confidence, 0.92)
+                elif best_utterance_similarity >= 0.7:
+                    confidence = max(confidence, 0.85)
+                elif best_utterance_similarity >= 0.55 and coverage_signal >= 0.35:
+                    confidence = max(confidence, 0.78)
+                if coverage_signal >= 0.55 and category_overlap >= 0.1 and best_utterance_similarity >= 0.5:
+                    confidence = max(confidence, 0.85)
             
             ranked.append(
                 RankedMatch(article_id=article.id, subject=article.subject, confidence=confidence)
