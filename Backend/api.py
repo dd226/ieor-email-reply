@@ -979,15 +979,19 @@ def ingest_email(email_in: EmailIn):
     confidence = float(result.confidence or 0.0)
     suggested_reply = result.body
 
-    # Simple policy: high confidence => auto, otherwise => review
-    status = (
-        EmailStatus.auto
-        if confidence >= CONFIDENCE_THRESHOLD
-        else EmailStatus.review
-    )
-
     db = SessionLocal()
     try:
+        # Get user's threshold from settings
+        settings = get_or_create_settings(db)
+        threshold = settings.auto_send_threshold or CONFIDENCE_THRESHOLD
+
+        # Simple policy: high confidence => auto, otherwise => review
+        status = (
+            EmailStatus.auto
+            if confidence >= threshold
+            else EmailStatus.review
+        )
+
         email_obj = EmailORM(
             student_name=email_in.student_name,
             uni=email_in.uni,
@@ -1005,7 +1009,6 @@ def ingest_email(email_in: EmailIn):
 
         # Auto-send if status is auto and settings allow it
         if status == EmailStatus.auto:
-            settings = get_or_create_settings(db)
             if settings.auto_send_enabled and email_in.email_address:
                 try:
                     creds, gmail_address = load_gmail_credentials()
