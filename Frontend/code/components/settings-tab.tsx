@@ -33,7 +33,7 @@ const BACKEND_URL = "http://127.0.0.1:8000";
 // Shared auto-send threshold (used by other tabs)
 // ---------------------
 const CONFIDENCE_THRESHOLD_KEY = "confidenceThresholdPct";
-const DEFAULT_CONFIDENCE_THRESHOLD_PCT = 92;
+const DEFAULT_CONFIDENCE_THRESHOLD_PCT = 90;
 
 // ---------------------
 // Advisor profile storage
@@ -844,8 +844,7 @@ export default function SettingsTab() {
                 </span>
               </div>
               <p className="text-xs text-muted-foreground mt-1">
-                Shared with other tabs. Emails with confidence ≥ this percentage
-                can be auto-sent.
+                Emails with confidence score greater than or equal to this threshold can be auto-sent.
               </p>
             </div>
 

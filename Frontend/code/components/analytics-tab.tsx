@@ -18,7 +18,7 @@ const BACKEND_URL = "http://127.0.0.1:8000";
 
 // must match SettingsTab
 const CONFIDENCE_THRESHOLD_KEY = "confidenceThresholdPct";
-const DEFAULT_CONFIDENCE_THRESHOLD_PCT = 92;
+const DEFAULT_CONFIDENCE_THRESHOLD_PCT = 90;
 
 type Severity = "green" | "yellow" | "red" | "none";
 
@@ -184,7 +184,7 @@ export default function AnalyticsTab() {
   const sentEmails = emails.filter((e) => e.status === "sent");
 
   // --- Key insight numbers (use threshold from Settings) ---
-  const effectiveThreshold = thresholdPct / 100; // convert 92 -> 0.92
+  const effectiveThreshold = thresholdPct / 100; // convert 90 -> 0.90
   const thresholdPercent = thresholdPct;
 
   const lowConfAll = emails.filter(
