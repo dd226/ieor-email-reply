@@ -481,7 +481,7 @@ export default function AnalyticsTab() {
       </Card>
     </div>
       <p className="text-xs text-muted-foreground">
-        Adjust your confidence threshold any time from the Settings tab to tune these insights.
+        Adjust the confidence threshold from the Settings tab to tune these insights.
       </p>
     </div>
   );
