@@ -1,5 +1,5 @@
 "use client"
-import { LayoutDashboard, Mail, BarChart3, Settings, LogOut } from "lucide-react"
+import { LayoutDashboard, Mail, BarChart3, Settings } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface SidebarNavProps {
@@ -20,7 +20,7 @@ export default function SidebarNav({ activeTab, onTabChange }: SidebarNavProps) 
       {/* Logo/Title */}
       <div className="px-6 py-8 border-b border-sidebar-border">
         <h1 className="text-xl font-bold text-sidebar-primary">Email Advising</h1>
-        <p className="text-xs text-sidebar-foreground/60 mt-1">Student Communications</p>
+        <p className="text-xs text-sidebar-foreground/60 mt-1">Columbia IEOR © 2025</p>
       </div>
 
       {/* Navigation Items */}
@@ -45,12 +45,11 @@ export default function SidebarNav({ activeTab, onTabChange }: SidebarNavProps) 
         })}
       </nav>
 
-      {/* Logout Button */}
-      <div className="px-4 py-4 border-t border-sidebar-border">
-        <button className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sidebar-foreground hover:bg-red-50 hover:text-red-600 transition-all text-sm font-medium">
-          <LogOut className="h-5 w-5" />
-          Logout
-        </button>
+      {/* Footer with Credits - next to N logo */}
+      <div className="px-5 pt-5 pb-6.5 border-t border-sidebar-border bg-sidebar">
+        <p className="text-[9px] text-sidebar-foreground/70 leading-tight text-right">
+          Developed by Emre Baser, Lara Jones,<br />Mayyada Shair, Samuel Velez-Hurtado
+        </p>
       </div>
     </aside>
   )

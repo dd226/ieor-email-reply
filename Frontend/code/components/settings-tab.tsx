@@ -183,6 +183,7 @@ export default function SettingsTab() {
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [emailSettingsDirty, setEmailSettingsDirty] = useState(false);
+  const [checkingGmailStatus, setCheckingGmailStatus] = useState(true);
 
   // ---------------------
   // Load all settings on mount
@@ -256,7 +257,15 @@ export default function SettingsTab() {
     // Load Gmail connection status (OAuth)
     fetch(`${BACKEND_URL}/gmail/status`)
       .then((res) => {
-        if (!res.ok) return;
+        if (!res.ok) {
+          // API error - treat as disconnected
+          applyPersistedEmailSettings((prev) => ({
+            ...prev,
+            gmail_connected: false,
+            gmail_address: null,
+          }));
+          return null;
+        }
         return res.json();
       })
       .then((data) => {
@@ -269,7 +278,15 @@ export default function SettingsTab() {
         setEmailSettingsDirty(false);
       })
       .catch(() => {
-        // If this fails, just treat as "not connected"
+        // Network error or backend not running - reset to disconnected
+        applyPersistedEmailSettings((prev) => ({
+          ...prev,
+          gmail_connected: false,
+          gmail_address: null,
+        }));
+      })
+      .finally(() => {
+        setCheckingGmailStatus(false);
       });
 
     // Load Knowledge Base from backend
@@ -767,8 +784,15 @@ export default function SettingsTab() {
                       : "bg-blue-600 hover:bg-blue-700"
                   }
                   onClick={handleConnectGmail}
+                  disabled={checkingGmailStatus}
                 >
-                  {emailSettings.gmail_connected ? "Reconnect" : "Connect Gmail"}
+                  {checkingGmailStatus ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : emailSettings.gmail_connected ? (
+                    "Reconnect"
+                  ) : (
+                    "Connect Gmail"
+                  )}
                 </Button>
                 {emailSettings.gmail_connected && (
                   <Button
@@ -776,6 +800,7 @@ export default function SettingsTab() {
                     size="sm"
                     className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
                     onClick={handleDisconnectGmail}
+                    disabled={checkingGmailStatus}
                   >
                     Disconnect
                   </Button>

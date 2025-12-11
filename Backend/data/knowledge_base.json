@@ -423,9 +423,10 @@
       "Looking for faculty research projects..",
       "How do I looking for faculty research projects?"
     ],
-    "response_template": "Hello {student_name},\n\nWe\u2019re happy to hear that you are interested in IEOR research! The IEOR department provides many exciting research and project opportunities to undergraduate students in IEOR. To explore the diverse research areas within our department, please refer to the overview page on departmental research, available here: {link_to_research}. IEOR students stay updated on the latest research and project opportunities via newsletters. We also encourage students to take the initiative and contact faculty members directly for potential research collaborations. For more information, we encourage you to contact Yi Zhang (yz3558@columbia.edu) or Eric Balkanski (eb3224@columbia.edu).\n\nBest regards,\nAcademic Advising Team",
+    "response_template": "Hello {student_name},\n\nWe're happy to hear that you are interested in IEOR research! The IEOR department provides many exciting research and project opportunities to undergraduate students in IEOR. To explore the diverse research areas within our department, please refer to the overview page on departmental research, available here: {link_to_research}. IEOR students stay updated on the latest research and project opportunities via newsletters. We also encourage students to take the initiative and contact faculty members directly for potential research collaborations. For more information, we encourage you to contact Yi Zhang (yz3558@columbia.edu) or Eric Balkanski (eb3224@columbia.edu).\n\nBest regards,\nAcademic Advising Team",
     "follow_up_questions": [
-      "?"
+      "Which research areas within IEOR interest you most?",
+      "Are you looking for research for credit or a volunteer/paid position?"
     ],
     "metadata": {}
   },
@@ -473,9 +474,10 @@
       "How do I i\u2019m worried about my grades in my classes this semester?",
       "How do I i\u2019m worried about my GPA?"
     ],
-    "response_template": "Hello {student_name},\n\nWe\u2019re sorry to hear that you are having a hard time this semester. We would like to meet with you to discuss your concerns and to devise a plan for how to address them. Our Head of Undergraduate Advising, Kelly Katsigiris, can help to address your curricular concerns.\n\nAdditionally, Columbia Health Services and Engineering Wellness will be your best resources for your health and wellness needs. If you feel stressed, chat on the phone with a mental health professional or sign up for a meeting. All links can be found on the Health and Wellness page of the IEOR department website: {link_to_health_wellness}.\n\nPlease know that we are always here to support you.\n\nWarmly,\nAcademic Advising Team",
+    "response_template": "Hello {student_name},\n\nWe're sorry to hear that you are having a hard time this semester. We would like to meet with you to discuss your concerns and to devise a plan for how to address them. Our Head of Undergraduate Advising, Kelly Katsigiris, can help to address your curricular concerns.\n\nAdditionally, Columbia Health Services and Engineering Wellness will be your best resources for your health and wellness needs. If you feel stressed, chat on the phone with a mental health professional or sign up for a meeting. All links can be found on the Health and Wellness page of the IEOR department website: {link_to_health_wellness}.\n\nPlease know that we are always here to support you.\n\nWarmly,\nAcademic Advising Team",
     "follow_up_questions": [
-      "?"
+      "Which specific courses are you finding most challenging?",
+      "Would you like us to schedule a meeting to discuss your options?"
     ],
     "metadata": {}
   },
@@ -507,29 +509,31 @@
   },
   {
     "id": "three_plus_two_program",
-    "subject": "Information about 3+2 Program",
+    "subject": "Information about 3+2 Combined Plan Program",
     "categories": [
       "majors",
       "requirements",
-      "pathways"
+      "pathways",
+      "combined plan"
     ],
     "utterances": [
-      "?",
-      "?",
-      "?",
-      "?",
-      "?",
-      "?",
       "How does the 3+2 program work?",
-      "3+2 Deadline..",
-      "Requirements for 3+2 admission..",
-      "How do I 3+2 Deadline?",
-      "How do I requirements for 3+2 admission?"
+      "What is the Combined Plan program?",
+      "3+2 combined plan information",
+      "3+2 Deadline",
+      "Requirements for 3+2 admission",
+      "Can I do 3+2 at Columbia Engineering?",
+      "Combined Plan application process",
+      "How do I apply to the 3+2 program?",
+      "What are the prerequisites for Combined Plan?",
+      "3+2 program from liberal arts college",
+      "Transfer to Columbia Engineering through 3+2"
     ],
-    "response_template": "Hello {student_name},\n\nBest regards,\nAcademic Advising Team",
+    "response_template": "Hello {student_name},\n\nThank you for your interest in the Combined Plan Program (also known as the 3+2 Program)! This program allows students from affiliated liberal arts colleges to earn two degrees: a Bachelor of Arts from their home institution and a Bachelor of Science from Columbia Engineering.\n\nHere's how the program works:\n• Students typically spend three years at their home institution completing liberal arts requirements and pre-engineering coursework.\n• Students then transfer to Columbia Engineering for two years to complete their engineering degree.\n• Upon completion, students receive both a BA from their original college and a BS from Columbia.\n\nKey requirements:\n• Strong academic record with a recommended GPA of 3.3 or higher\n• Completion of prerequisite courses in mathematics (through differential equations), physics, chemistry, and computer science\n• Recommendation from your home institution's Combined Plan advisor\n• Application typically submitted during the fall of your third year\n\nFor detailed information about prerequisites, affiliated colleges, and application deadlines, please visit the Combined Plan page on the Columbia Engineering website: {combined_plan_link}\n\nWe would be happy to meet with you to discuss whether the Combined Plan is a good fit for your academic goals.\n\nBest regards,\nAcademic Advising Team",
     "follow_up_questions": [
-      "?",
-      "?"
+      "Which affiliated college are you currently attending?",
+      "Have you completed the prerequisite math and science courses?",
+      "Which engineering major are you considering at Columbia?"
     ],
     "metadata": {}
   }
