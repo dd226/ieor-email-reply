@@ -52,7 +52,7 @@ export default function Page() {
               </div>
               <MetricsCards />
               <p className="text-xs text-muted-foreground">
-                For detailed email review and approvals, use the Email Management tab.
+                For detailed email review, use the Email Management tab.
               </p>
             </div>
           )}
