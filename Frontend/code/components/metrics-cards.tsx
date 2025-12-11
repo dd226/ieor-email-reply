@@ -293,7 +293,7 @@ export default function MetricsCards() {
         )
       : chartData;
 
-  // Calculate oldest pending email
+  // Calculate oldest needs-review email
   const oldestPendingLabel = (() => {
     if (reviewEmails.length === 0) return "—";
 
@@ -311,6 +311,53 @@ export default function MetricsCards() {
 
     const diffMinutes = Math.floor(diffMs / 60000);
     return formatDurationFromMinutes(diffMinutes);
+  })();
+
+  // Calculate oldest pending-send email
+  const oldestPendingSendLabel = (() => {
+    if (pendingSendEmails.length === 0) return "—";
+    const dates = pendingSendEmails
+      .map((e) => parseReceivedAt(e.received_at))
+      .filter((d): d is Date => d !== null && !isNaN(d.getTime()));
+    if (dates.length === 0) return "—";
+    const now = new Date();
+    const oldest = dates.reduce((min, d) => (d < min ? d : min), dates[0]);
+    let diffMs = now.getTime() - oldest.getTime();
+    if (diffMs < 0) diffMs = 0;
+    const diffMinutes = Math.floor(diffMs / 60000);
+    return formatDurationFromMinutes(diffMinutes);
+  })();
+
+  // Last received email timestamp label
+  const lastReceivedLabel = (() => {
+    if (emails.length === 0) return "—";
+    const latest = emails
+      .map((e) => parseReceivedAt(e.received_at))
+      .filter((d): d is Date => d !== null && !isNaN(d.getTime()))
+      .sort((a, b) => b.getTime() - a.getTime())[0];
+    if (!latest) return "—";
+    return latest.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  })();
+
+  // Average response time for sent emails
+  const avgSentResponseLabel = (() => {
+    const completed = sentEmails.filter((email) => email.approved_at);
+    if (completed.length === 0) return "—";
+    let totalMinutes = 0;
+    completed.forEach((email) => {
+      const received = parseReceivedAt(email.received_at);
+      const approved = parseReceivedAt(email.approved_at!);
+      if (!received || !approved) return;
+      let diffMs = approved.getTime() - received.getTime();
+      if (diffMs < 0) diffMs = 0;
+      totalMinutes += Math.floor(diffMs / 60000);
+    });
+    if (totalMinutes === 0) return "<1m";
+    const avgMinutes = Math.round(totalMinutes / completed.length);
+    return formatDurationFromMinutes(avgMinutes);
   })();
 
 
@@ -372,9 +419,8 @@ export default function MetricsCards() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-blue-600 -mt-1">{emailsToday}</div>
-            <p className="mt-3 text-xs text-muted-foreground">
-              Number of emails received today
-            </p>
+            <p className="mt-3 text-xs text-muted-foreground">Number of emails received today</p>
+            <p className="text-xs text-muted-foreground mt-1">Last received: {lastReceivedLabel}</p>
           </CardContent>
         </Card>
 
@@ -387,13 +433,9 @@ export default function MetricsCards() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-blue-600 -mt-1">{manualReview}</div>
-            <p className="mt-3 text-xs text-muted-foreground">
-              Number of emails that need manual review
-            </p>
+            <p className="mt-3 text-xs text-muted-foreground">Number of emails that need review</p>
             {manualReview > 0 && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Oldest waiting: {oldestPendingLabel}
-              </p>
+              <p className="text-xs text-muted-foreground mt-1">Oldest waiting: {oldestPendingLabel}</p>
             )}
           </CardContent>
         </Card>
@@ -407,9 +449,10 @@ export default function MetricsCards() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-blue-600 -mt-1">{pendingSend}</div>
-            <p className="mt-3 text-xs text-muted-foreground">
-              Number of approved emails waiting to be sent
-            </p>
+            <p className="mt-3 text-xs text-muted-foreground">Number of emails waiting to be sent</p>
+            {pendingSendEmails.length > 0 && (
+              <p className="text-xs text-muted-foreground mt-1">Oldest waiting: {oldestPendingSendLabel}</p>
+            )}
           </CardContent>
         </Card>
 
@@ -422,9 +465,10 @@ export default function MetricsCards() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-blue-600 -mt-1">{sentCount}</div>
-            <p className="mt-3 text-xs text-muted-foreground">
-              Number of replies delivered
-            </p>
+            <p className="mt-3 text-xs text-muted-foreground">Number of replies delivered</p>
+            {sentEmails.length > 0 && (
+              <p className="text-xs text-muted-foreground mt-1">Avg response time: {avgSentResponseLabel}</p>
+            )}
           </CardContent>
         </Card>
       </div>
