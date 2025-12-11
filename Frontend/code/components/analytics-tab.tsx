@@ -456,7 +456,7 @@ export default function AnalyticsTab() {
             </div>
             <p className="text-sm text-blue-800">
               of emails are pending review ({pendingCount} out of {total}).
-              These emails are below your confidence threshold, so they require manual review.
+              These emails are below the confidence threshold, so they need manual review.
             </p>
           </div>
           <div className="flex gap-4">
@@ -465,7 +465,7 @@ export default function AnalyticsTab() {
             </div>
             <p className="text-sm text-blue-800">
               of emails are pending send ({pendingSendEmails.length} out of {total}).
-              These emails are above your confidence threshold but auto-send wasn’t enabled, so they await sending.
+              These emails are above the confidence threshold but auto-send wasn’t enabled.
             </p>
           </div>
           <div className="flex gap-4">
