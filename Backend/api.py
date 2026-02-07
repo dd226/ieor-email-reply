@@ -18,7 +18,7 @@ from email.message import EmailMessage
 
 from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 from pydantic import BaseModel, ConfigDict
 
 from email_advising import (
@@ -1675,5 +1675,346 @@ def metrics():
             "avg_confidence": float(avg_conf),
             "avg_auto_confidence": float(avg_auto_conf),
         }
+    finally:
+        db.close()
+
+
+@app.get("/metrics-dashboard")
+def metrics_dashboard():
+    """
+    Returns a beautiful HTML dashboard displaying system metrics.
+    """
+    db = SessionLocal()
+    try:
+        # Calculate all metrics
+        total = db.query(func.count(EmailORM.id)).scalar() or 0
+
+        eastern = ZoneInfo("America/New_York")
+        now_eastern = datetime.now(eastern)
+        start_of_today_eastern = now_eastern.replace(hour=0, minute=0, second=0, microsecond=0)
+        start_of_today_utc = start_of_today_eastern.astimezone(ZoneInfo("UTC"))
+
+        emails_today = (
+            db.query(func.count(EmailORM.id))
+            .filter(EmailORM.received_at >= start_of_today_utc)
+            .scalar()
+            or 0
+        )
+
+        auto_count = db.query(func.count(EmailORM.id)).filter(EmailORM.status == EmailStatus.auto).scalar() or 0
+        review_count = db.query(func.count(EmailORM.id)).filter(EmailORM.status == EmailStatus.review).scalar() or 0
+        sent_count = db.query(func.count(EmailORM.id)).filter(EmailORM.status == EmailStatus.sent).scalar() or 0
+
+        avg_conf = db.query(func.avg(EmailORM.confidence)).scalar() or 0.0
+        avg_auto_conf = db.query(func.avg(EmailORM.confidence)).filter(EmailORM.status == EmailStatus.auto).scalar() or 0.0
+
+        # Calculate confidence percentages
+        avg_conf_pct = round(avg_conf * 100, 1)
+        avg_auto_pct = round(avg_auto_conf * 100, 1) if avg_auto_conf else 0
+
+        # Determine confidence status
+        if avg_conf < 0.55:
+            conf_status = "⚠️ Below Review Threshold"
+            conf_color = "#ef4444"
+        elif avg_conf < 0.95:
+            conf_status = "✓ Awaiting Review"
+            conf_color = "#f59e0b"
+        else:
+            conf_status = "✅ Ready for Auto-Send"
+            conf_color = "#10b981"
+
+        html_content = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Advising - System Metrics</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }}
+
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+        }}
+
+        .header {{
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+            animation: slideDown 0.6s ease-out;
+        }}
+
+        .header h1 {{
+            font-size: 2.5em;
+            font-weight: 700;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }}
+
+        .header p {{
+            font-size: 1.1em;
+            opacity: 0.9;
+        }}
+
+        .metrics-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+            animation: fadeIn 0.8s ease-out 0.2s both;
+        }}
+
+        .metric-card {{
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }}
+
+        .metric-card:hover {{
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+        }}
+
+        .metric-card::before {{
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+        }}
+
+        .metric-label {{
+            font-size: 0.85em;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }}
+
+        .metric-value {{
+            font-size: 2.5em;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 10px;
+        }}
+
+        .metric-description {{
+            font-size: 0.9em;
+            color: #999;
+            line-height: 1.4;
+        }}
+
+        .confidence-card {{
+            grid-column: 1 / -1;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            animation: fadeIn 0.8s ease-out 0.4s both;
+        }}
+
+        .confidence-card .metric-label {{
+            color: rgba(255,255,255,0.8);
+        }}
+
+        .confidence-card .metric-value {{
+            color: white;
+            font-size: 3.5em;
+        }}
+
+        .confidence-status {{
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            background: rgba(255,255,255,0.2);
+            font-size: 0.95em;
+            margin-top: 12px;
+        }}
+
+        .progress-bar {{
+            width: 100%;
+            height: 8px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 4px;
+            margin-top: 15px;
+            overflow: hidden;
+        }}
+
+        .progress-fill {{
+            height: 100%;
+            background: #4ade80;
+            border-radius: 4px;
+            transition: width 1s ease-out;
+            width: {avg_conf_pct}%;
+        }}
+
+        .progress-labels {{
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75em;
+            margin-top: 8px;
+            opacity: 0.8;
+        }}
+
+        .status-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }}
+
+        .status-item {{
+            background: rgba(255,255,255,0.15);
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+        }}
+
+        .status-item-label {{
+            font-size: 0.8em;
+            opacity: 0.8;
+            margin-bottom: 5px;
+        }}
+
+        .status-item-value {{
+            font-size: 1.8em;
+            font-weight: 600;
+        }}
+
+        .footer {{
+            text-align: center;
+            color: white;
+            margin-top: 40px;
+            font-size: 0.9em;
+            opacity: 0.8;
+        }}
+
+        .api-info {{
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+            color: white;
+            font-size: 0.85em;
+        }}
+
+        .api-info a {{
+            color: #4ade80;
+            text-decoration: none;
+        }}
+
+        .api-info a:hover {{
+            text-decoration: underline;
+        }}
+
+        @keyframes slideDown {{
+            from {{
+                opacity: 0;
+                transform: translateY(-20px);
+            }}
+            to {{
+                opacity: 1;
+                transform: translateY(0);
+            }}
+        }}
+
+        @keyframes fadeIn {{
+            from {{
+                opacity: 0;
+            }}
+            to {{
+                opacity: 1;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Email Advising System</h1>
+            <p>Real-time Metrics Dashboard</p>
+        </div>
+
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-label">📧 Emails Today</div>
+                <div class="metric-value">{emails_today}</div>
+                <div class="metric-description">Messages received in the last 24 hours</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-label">⏳ Needs Review</div>
+                <div class="metric-value">{review_count}</div>
+                <div class="metric-description">Awaiting advisor approval</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-label">✉️ Ready to Send</div>
+                <div class="metric-value">{auto_count}</div>
+                <div class="metric-description">Approved for automatic delivery</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-label">✅ Sent</div>
+                <div class="metric-value">{sent_count}</div>
+                <div class="metric-description">Successfully delivered replies</div>
+            </div>
+
+            <div class="metric-card confidence-card">
+                <div class="metric-label">🎯 Confidence Score</div>
+                <div class="metric-value">{avg_conf_pct}%</div>
+                <div class="metric-description">Average confidence in routing decisions</div>
+                <div class="confidence-status">{conf_status}</div>
+                <div class="progress-bar">
+                    <div class="progress-fill"></div>
+                </div>
+                <div class="progress-labels">
+                    <span>0%</span>
+                    <span>55% (Review)</span>
+                    <span>95% (Auto-Send)</span>
+                    <span>100%</span>
+                </div>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <div class="status-item-label">Total Emails</div>
+                        <div class="status-item-value">{total}</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-item-label">Auto-Send Avg</div>
+                        <div class="status-item-value">{avg_auto_pct}%</div>
+                    </div>
+                </div>
+                <div class="api-info">
+                    💡 <strong>Tip:</strong> Access raw JSON metrics at <a href="/metrics">/metrics</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>🚀 Phase 1 improvements deployed | Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} EST</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+        return HTMLResponse(content=html_content)
     finally:
         db.close()
