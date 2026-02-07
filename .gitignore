@@ -2,6 +2,9 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
+.env
+.env.local
 Backend/emails.db
 Backend/data/google_client_secrets.json
 Backend/data/gmail_token.json
+*.db

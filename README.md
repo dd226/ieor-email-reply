@@ -149,19 +149,30 @@ The Email Advising System automates the process of responding to routine student
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    ```
 
-3. **Install dependencies:**
+3. **Set up environment variables:**
    ```bash
-   pip install fastapi uvicorn sqlalchemy google-auth google-auth-oauthlib google-api-python-client
+   # Copy environment template
+   cp ../.env.example ../.env
+
+   # Edit .env and fill in:
+   # - GOOGLE_OAUTH_CLIENT_FILE: Path to your OAuth secrets
+   # - FRONTEND_URL: Your frontend URL (default: http://localhost:3000)
    ```
 
-4. **Set up Gmail OAuth:**
+4. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+5. **Set up Gmail OAuth:**
    - Go to [Google Cloud Console](https://console.cloud.google.com/)
    - Create a new project or select existing
    - Enable Gmail API
    - Create OAuth 2.0 credentials (Desktop app)
-   - Download `client_secrets.json` and place in `Backend/data/google_client_secrets.json`
+   - Download `client_secrets.json`
+   - Set `GOOGLE_OAUTH_CLIENT_FILE` in `.env` to point to this file
 
-5. **Run the server:**
+6. **Run the server:**
    ```bash
    uvicorn api:app --reload --port 8000
    ```

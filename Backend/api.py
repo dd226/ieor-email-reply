@@ -1,12 +1,15 @@
 import os
 import json
 import base64
+import secrets
+import ipaddress
 from pathlib import Path
 from datetime import datetime, date
 from enum import Enum
-from typing import List, Optional, Dict, Sequence, Any
+from typing import List, Optional, Dict, Sequence, Any, Tuple
 from datetime import timezone as dt_timezone, timedelta
 from zoneinfo import ZoneInfo
+from urllib.parse import urlparse
 
 import email
 from email.header import decode_header
@@ -48,6 +51,37 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 # =====================================================
+# Environment validation
+# =====================================================
+
+def validate_environment():
+    """Validate required environment variables are set."""
+    # Check if .env file exists
+    env_file = Path(__file__).resolve().parent.parent / ".env"
+    if not env_file.exists():
+        print("⚠️  WARNING: .env file not found. Copy .env.example to .env and fill in values.")
+
+    required_vars = {
+        "GOOGLE_OAUTH_CLIENT_FILE": "Path to OAuth client secrets JSON file",
+        "FRONTEND_URL": "Frontend URL for OAuth redirects",
+    }
+
+    missing = []
+    for var, description in required_vars.items():
+        value = os.getenv(var)
+        if not value:
+            missing.append(f"  - {var}: {description}")
+        elif var == "GOOGLE_OAUTH_CLIENT_FILE":
+            if not Path(value).exists():
+                missing.append(f"  - {var}: File does not exist at {value}")
+
+    if missing:
+        error_msg = "⚠️  Missing or invalid environment variables:\n" + "\n".join(missing)
+        error_msg += "\n\nPlease set these in your .env file or environment."
+        print(error_msg)
+        # Continue with defaults for development, but warn the user
+
+# =====================================================
 # Paths, constants, app setup
 # =====================================================
 
@@ -66,8 +100,11 @@ CLIENT_SECRETS_FILE = os.getenv(
 GMAIL_TOKEN_PATH = DATA_DIR / "gmail_token.json"
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
-# In-memory store for OAuth flows keyed by state
-oauth_flows: Dict[str, Flow] = {}
+# Validate environment on startup
+validate_environment()
+
+# In-memory store for OAuth flows keyed by state, with expiration
+oauth_flows: Dict[str, Tuple[Flow, datetime]] = {}
 
 # =====================================================
 # FastAPI app + CORS
@@ -79,8 +116,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # =====================================================
@@ -441,6 +478,75 @@ class SendEmailRequest(BaseModel):
     reply_text: Optional[str] = None
 
 
+# =====================================================
+# SSRF Protection helpers
+# =====================================================
+
+BLOCKED_HOSTNAMES = {
+    'localhost', '127.0.0.1', '0.0.0.0',
+    'metadata.google.internal',  # GCP metadata
+    '169.254.169.254',            # AWS metadata
+    '[::1]',                      # IPv6 localhost
+}
+
+
+def validate_and_normalize_email(email_address: str) -> str:
+    """Validate and normalize email address."""
+    if not email_address or not email_address.strip():
+        raise HTTPException(status_code=400, detail="Email address is required")
+
+    try:
+        from email_validator import validate_email, EmailNotValidError
+        validated = validate_email(email_address, check_deliverability=False)
+        return validated.normalized
+    except EmailNotValidError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid email address: {str(e)}")
+    except ImportError:
+        # Fallback if email_validator not installed
+        raise HTTPException(status_code=500, detail="Email validation service not available")
+
+
+def validate_url_safe(url: str) -> None:
+    """Validate URL is safe to fetch (prevents SSRF attacks)."""
+    parsed = urlparse(url)
+
+    # Check protocol
+    if parsed.scheme not in ('http', 'https'):
+        raise HTTPException(
+            status_code=400,
+            detail="Only HTTP and HTTPS protocols are allowed"
+        )
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise HTTPException(status_code=400, detail="Invalid URL: no hostname")
+
+    # Block known internal hostnames
+    if hostname.lower() in BLOCKED_HOSTNAMES:
+        raise HTTPException(
+            status_code=400,
+            detail="Access to internal hostnames is not allowed"
+        )
+
+    # Try to resolve to IP and check if private
+    try:
+        import socket
+        ip_str = socket.gethostbyname(hostname)
+        ip = ipaddress.ip_address(ip_str)
+
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            raise HTTPException(
+                status_code=400,
+                detail="Access to private IP addresses is not allowed"
+            )
+    except socket.gaierror:
+        # DNS resolution failed - could be invalid or unavailable
+        raise HTTPException(status_code=400, detail="Unable to resolve hostname")
+    except ValueError:
+        # Invalid IP format - shouldn't happen after gethostbyname
+        raise HTTPException(status_code=400, detail="Invalid IP address")
+
+
 @app.post("/fetch-url-content")
 def fetch_url_content(req: FetchURLRequest):
     """
@@ -449,37 +555,46 @@ def fetch_url_content(req: FetchURLRequest):
     """
     import requests
     from bs4 import BeautifulSoup
-    
+
+    # Validate URL before fetching (SSRF protection)
+    validate_url_safe(req.url)
+
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (compatible; EmailAdvisingBot/1.0)"
         }
-        response = requests.get(req.url, headers=headers, timeout=10)
+        response = requests.get(
+            req.url,
+            headers=headers,
+            timeout=10,
+            allow_redirects=True,
+            max_redirects=3
+        )
         response.raise_for_status()
-        
+
         soup = BeautifulSoup(response.text, "html.parser")
-        
+
         # Remove script and style elements
         for script in soup(["script", "style", "nav", "footer", "header"]):
             script.decompose()
-        
+
         # Get text
         text = soup.get_text(separator=" ", strip=True)
-        
+
         # Clean up whitespace
         lines = (line.strip() for line in text.splitlines())
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         text = " ".join(chunk for chunk in chunks if chunk)
-        
+
         # Truncate if too long
         if len(text) > 5000:
             text = text[:5000] + "..."
-        
+
         # Try to get page title
         title = ""
         if soup.title and soup.title.string:
             title = soup.title.string.strip()
-        
+
         return {
             "ok": True,
             "title": title,
@@ -854,6 +969,37 @@ def update_email_settings(payload: EmailSettingsUpdate):
 
 
 # =====================================================
+# OAuth state helpers
+# =====================================================
+
+
+def create_oauth_state() -> str:
+    """Generate cryptographically secure state token."""
+    return secrets.token_urlsafe(32)
+
+
+def validate_oauth_state(state: str) -> bool:
+    """Validate state token format and expiration."""
+    if state not in oauth_flows:
+        return False
+
+    flow, expiry = oauth_flows[state]
+    if datetime.utcnow() > expiry:
+        oauth_flows.pop(state, None)
+        return False
+
+    return True
+
+
+def cleanup_expired_oauth_states():
+    """Remove expired OAuth states."""
+    now = datetime.utcnow()
+    expired = [state for state, (_, expiry) in oauth_flows.items() if now > expiry]
+    for state in expired:
+        oauth_flows.pop(state, None)
+
+
+# =====================================================
 # Gmail OAuth endpoints
 # =====================================================
 
@@ -906,13 +1052,18 @@ def gmail_auth_url():
         redirect_uri="http://127.0.0.1:8000/gmail/oauth2callback",
     )
 
-    # NOTE: include_granted_scopes removed – it was causing the 400 error.
-    auth_url, state = flow.authorization_url(
+    # Generate secure state token
+    state = create_oauth_state()
+    auth_url, _ = flow.authorization_url(
         access_type="offline",
         prompt="consent",
+        state=state,
     )
 
-    oauth_flows[state] = flow
+    # Store with 10-minute expiration
+    expiry = datetime.utcnow() + timedelta(minutes=10)
+    oauth_flows[state] = (flow, expiry)
+
     return {"auth_url": auth_url}
 
 
@@ -922,9 +1073,11 @@ def gmail_oauth2callback(request: Request, state: str, code: str):
     OAuth redirect URI that Google calls with ?state=...&code=...
     Exchanges code for tokens, stores them, and then redirects user back to the frontend.
     """
-    flow = oauth_flows.get(state)
-    if not flow:
-        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+    # Validate state token
+    if not validate_oauth_state(state):
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+
+    flow, _ = oauth_flows[state]
 
     # Complete the OAuth flow
     flow.fetch_token(code=code)
@@ -940,7 +1093,7 @@ def gmail_oauth2callback(request: Request, state: str, code: str):
 
     save_gmail_credentials(creds, email_address)
 
-    # Clean up the used state
+    # Clean up the used state immediately after use
     oauth_flows.pop(state, None)
 
     # Redirect back to the frontend app
@@ -969,6 +1122,10 @@ def ingest_email(email_in: EmailIn):
     5. Return the stored email object.
     """
     received_at = email_in.received_at or datetime.utcnow()
+
+    # Validate email address if provided
+    if email_in.email_address:
+        email_in.email_address = validate_and_normalize_email(email_in.email_address)
 
     # Run advisor on the body (what the student actually wrote)
     result = advisor.process_query(
@@ -1090,6 +1247,19 @@ def sync_emails(limit: int = 20):
                 subject = subject.decode(enc or "utf-8", errors="ignore")
 
             from_name, from_addr = parseaddr(msg.get("From", ""))
+
+            # Validate sender email if present
+            if from_addr:
+                try:
+                    from_addr = validate_and_normalize_email(from_addr)
+                except HTTPException:
+                    # Skip invalid sender emails
+                    service.users().messages().modify(
+                        userId="me",
+                        id=msg_id,
+                        body={"removeLabelIds": ["UNREAD"]},
+                    ).execute()
+                    continue
 
             body = extract_text_from_email(msg)
             if not body.strip():
@@ -1248,6 +1418,9 @@ def send_email_reply(email_id: int, payload: Optional[SendEmailRequest] = None):
                     status_code=400,
                     detail="No recipient email address available for this email.",
                 )
+
+        # Validate recipient email address
+        to_addr = validate_and_normalize_email(to_addr)
 
         # Use provided reply text or the stored suggested_reply
         new_reply = payload.reply_text if payload else None
