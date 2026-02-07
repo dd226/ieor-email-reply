@@ -163,6 +163,7 @@ class EmailAdvisor:
             
             # Calculate best Jaccard similarity with any utterance using RAW tokens only
             # This measures phrase/pattern matching without semantic augmentation
+            # PHASE 1 IMPROVEMENT #1: Length-normalized Jaccard for fair comparison
             best_utterance_similarity = 0.0
             best_query_coverage = 0.0
             best_utterance_coverage = 0.0
@@ -175,7 +176,18 @@ class EmailAdvisor:
                     if union_raw:
                         intersection_raw = len(qset & utterance_set)
                         jaccard_raw = intersection_raw / union_raw
-                        best_utterance_similarity = max(best_utterance_similarity, jaccard_raw)
+
+                        # PHASE 1 #1: Apply length normalization boost
+                        # Short, clear queries (< 5 tokens) are more reliable → 10% boost
+                        # Long, verbose queries (> 20 tokens) are harder to match → 5% penalty
+                        length_boost = 1.0
+                        if len(raw_query_tokens) < 5:
+                            length_boost = 1.1
+                        elif len(raw_query_tokens) > 20:
+                            length_boost = 0.95
+                        jaccard_raw_normalized = min(jaccard_raw * length_boost, 1.0)
+
+                        best_utterance_similarity = max(best_utterance_similarity, jaccard_raw_normalized)
                         if len(qset) > 0:
                             query_cov = intersection_raw / len(qset)
                             best_query_coverage = max(best_query_coverage, query_cov)
@@ -200,17 +212,23 @@ class EmailAdvisor:
             category_tokens = self._category_token_sets[idx]
             article_overlap = 0.0
             category_overlap = 0.0
+
+            # PHASE 1 IMPROVEMENT #3: Continuous category scoring
+            # Replace binary category match with Jaccard similarity for smooth scoring
             for aug_qset in augmented_query_sets:
                 if not aug_qset:
                     continue
                 article_union = len(aug_qset | article_tokens)
                 if article_union:
                     article_overlap = max(article_overlap, len(aug_qset & article_tokens) / article_union)
-                category_union = len(aug_qset | category_tokens)
-                if category_union:
-                    category_overlap = max(
-                        category_overlap, len(aug_qset & category_tokens) / category_union
-                    )
+
+                # Calculate continuous category similarity instead of binary overlap
+                if category_tokens:
+                    category_intersection = len(aug_qset & category_tokens)
+                    category_union = len(aug_qset | category_tokens)
+                    if category_union > 0:
+                        continuous_category_score = category_intersection / category_union
+                        category_overlap = max(category_overlap, continuous_category_score)
 
             # Blend semantic (TF-IDF) and lexical overlaps. Prioritize the strongest signals
             if exact_match:
@@ -245,6 +263,7 @@ class EmailAdvisor:
     def process_query(self, query: str, metadata: Optional[Dict[str, str]] = None) -> AdvisorResponse:
         metadata = dict(metadata or {})
         metadata_notes: List[str] = []
+        extracted_metadata_facts: List[str] = []
         if self.metadata_extractor:
             for fact in self.metadata_extractor.extract(query):
                 if fact.key not in self._known_metadata_keys:
@@ -253,7 +272,38 @@ class EmailAdvisor:
                     continue
                 metadata[fact.key] = fact.value
                 metadata_notes.append(fact.reason)
+                extracted_metadata_facts.append(fact.key)
+
         matches = self.rank_articles(query)
+
+        # PHASE 1 IMPROVEMENT #2: Metadata-boosted confidence
+        # If metadata was successfully extracted, increase confidence of matches
+        # since more specific context = higher reliability
+        if matches and extracted_metadata_facts:
+            metadata_bonus = 0.0
+
+            # Student name found = +3% confidence (specific personal context)
+            if "student_name" in extracted_metadata_facts:
+                metadata_bonus += 0.03
+
+            # Term or deadline found = +4% confidence (specific temporal context)
+            if any(key in extracted_metadata_facts for key in ["term", "registration_deadline", "withdrawal_deadline"]):
+                metadata_bonus += 0.04
+
+            # Multiple facts found = +2% confidence (detailed context)
+            if len(extracted_metadata_facts) >= 3:
+                metadata_bonus += 0.02
+
+            # Apply bonus to all matches (but cap at 0.97 to prevent overconfidence)
+            if metadata_bonus > 0:
+                matches = [
+                    RankedMatch(
+                        article_id=match.article_id,
+                        subject=match.subject,
+                        confidence=min(match.confidence + metadata_bonus, 0.97)
+                    )
+                    for match in matches
+                ]
         reasons: List[str] = []
         if not matches:
             reasons.extend(metadata_notes)
