@@ -220,6 +220,9 @@ export default function EmailsTab() {
   // Saved drafts (localStorage)
   const [savedDrafts, setSavedDrafts] = useState<Record<number, string>>({});
 
+  // Assigned persons (localStorage)
+  const [assignedPersons, setAssignedPersons] = useState<Record<number, string>>({});
+
   // Updated filters
   const filters: { id: FilterType; label: string; description: string }[] = [
     { id: "all", label: "All", description: "Show all emails" },
@@ -255,6 +258,26 @@ export default function EmailsTab() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(savedDrafts));
   }, [savedDrafts]);
+
+  // --- Load assigned persons from localStorage ---
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const stored = window.localStorage.getItem("emailAssignments");
+    if (stored) {
+      try {
+        setAssignedPersons(JSON.parse(stored));
+      } catch {
+        // ignore parse errors
+      }
+    }
+  }, []);
+
+  // --- Save assigned persons to localStorage whenever they change ---
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("emailAssignments", JSON.stringify(assignedPersons));
+  }, [assignedPersons]);
 
   // --- Fetch Gmail status ---
   async function fetchGmailStatus() {
@@ -999,6 +1022,8 @@ export default function EmailsTab() {
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
               savedDrafts={savedDrafts}
+              assignedPersons={assignedPersons}
+              onAssignPerson={(id, person) => setAssignedPersons(prev => ({ ...prev, [id]: person }))}
             />
           </div>
         )}
