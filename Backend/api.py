@@ -745,6 +745,20 @@ class EmailORM(Base):
     approved_at = Column(DateTime, nullable=True)  # when advisor approved/sent
 
 
+class EmailAssignmentORM(Base):
+    """
+    Stores advisor assignments for emails.
+    Persists assignments permanently across all browsers and computers.
+    """
+    __tablename__ = "email_assignments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email_id = Column(Integer, nullable=False, index=True, unique=True)  # Foreign key to emails.id
+    assigned_person = Column(String, nullable=False)  # Advisor name (Winsor, Kelly, etc.)
+    assigned_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 # Create tables if they don't exist yet
 Base.metadata.create_all(bind=engine)
 
@@ -1567,6 +1581,86 @@ def delete_email(email_id: int):
         db.delete(email_obj)
         db.commit()
         return {"ok": True}
+    finally:
+        db.close()
+
+
+# =====================================================
+# Endpoint: email assignments (advisor assignments)
+# =====================================================
+
+
+@app.get("/emails/assignments")
+def get_all_assignments():
+    """
+    Get all email-to-advisor assignments.
+    Returns: { email_id: "advisor_name", ... }
+    """
+    db = SessionLocal()
+    try:
+        assignments = db.query(EmailAssignmentORM).all()
+        return {assignment.email_id: assignment.assigned_person for assignment in assignments}
+    finally:
+        db.close()
+
+
+@app.post("/emails/{email_id}/assign")
+def assign_email(email_id: int, person: str = Query(..., description="Advisor name")):
+    """
+    Assign an email to an advisor.
+
+    Example: POST /emails/42/assign?person=Kelly
+    """
+    db = SessionLocal()
+    try:
+        # Verify email exists
+        email_obj = db.query(EmailORM).filter(EmailORM.id == email_id).first()
+        if email_obj is None:
+            raise HTTPException(status_code=404, detail="Email not found")
+
+        # Check if assignment already exists
+        existing = db.query(EmailAssignmentORM).filter(EmailAssignmentORM.email_id == email_id).first()
+
+        if existing:
+            # Update existing assignment
+            existing.assigned_person = person
+            existing.updated_at = datetime.utcnow()
+            db.commit()
+            return {"ok": True, "email_id": email_id, "assigned_person": person}
+        else:
+            # Create new assignment
+            assignment = EmailAssignmentORM(
+                email_id=email_id,
+                assigned_person=person,
+                assigned_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
+            )
+            db.add(assignment)
+            db.commit()
+            return {"ok": True, "email_id": email_id, "assigned_person": person}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.delete("/emails/{email_id}/assign")
+def unassign_email(email_id: int):
+    """
+    Remove advisor assignment from an email.
+
+    Example: DELETE /emails/42/assign
+    """
+    db = SessionLocal()
+    try:
+        assignment = db.query(EmailAssignmentORM).filter(EmailAssignmentORM.email_id == email_id).first()
+        if assignment is None:
+            return {"ok": True, "message": "No assignment found"}
+
+        db.delete(assignment)
+        db.commit()
+        return {"ok": True, "email_id": email_id, "message": "Assignment removed"}
     finally:
         db.close()
 

@@ -220,8 +220,16 @@ export default function EmailsTab() {
   // Saved drafts (localStorage)
   const [savedDrafts, setSavedDrafts] = useState<Record<number, string>>({});
 
-  // Assigned persons (localStorage)
-  const [assignedPersons, setAssignedPersons] = useState<Record<number, string>>({});
+  // Assigned persons (localStorage) - with proper initialization
+  const [assignedPersons, setAssignedPersons] = useState<Record<number, string>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const stored = window.localStorage.getItem("emailAssignments");
+      return stored ? JSON.parse(stored) : {};
+    } catch {
+      return {};
+    }
+  });
 
   // Updated filters
   const filters: { id: FilterType; label: string; description: string }[] = [
@@ -259,20 +267,6 @@ export default function EmailsTab() {
     window.localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(savedDrafts));
   }, [savedDrafts]);
 
-  // --- Load assigned persons from localStorage ---
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const stored = window.localStorage.getItem("emailAssignments");
-    if (stored) {
-      try {
-        setAssignedPersons(JSON.parse(stored));
-      } catch {
-        // ignore parse errors
-      }
-    }
-  }, []);
-
   // --- Save assigned persons to localStorage whenever they change ---
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -309,6 +303,17 @@ export default function EmailsTab() {
 
       const allEmails: Email[] = await res.json();
       setEmails(allEmails);
+
+      // Also fetch assignments from backend
+      try {
+        const assignRes = await fetch(`${BACKEND_URL}/emails/assignments`);
+        if (assignRes.ok) {
+          const assignments = await assignRes.json();
+          setAssignedPersons(assignments);
+        }
+      } catch (err) {
+        console.error("Failed to fetch assignments:", err);
+      }
     } catch (err) {
       console.error(err);
       setError("Could not load emails from backend");
@@ -329,6 +334,53 @@ export default function EmailsTab() {
     } catch (err) {
       console.error(err);
       // metrics failure is non-blocking
+    }
+  }
+
+  // --- Handle email assignment to advisor ---
+  async function handleAssignPerson(emailId: number, person: string) {
+    try {
+      // Update UI optimistically
+      setAssignedPersons(prev => ({ ...prev, [emailId]: person }));
+
+      // Save to backend
+      if (person === "") {
+        // Unassign
+        const res = await fetch(`${BACKEND_URL}/emails/${emailId}/assign`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          // Revert on error
+          setAssignedPersons(prev => {
+            const updated = { ...prev };
+            delete updated[emailId];
+            return updated;
+          });
+          showToast("Failed to unassign email", "error");
+        }
+      } else {
+        // Assign to person
+        const res = await fetch(`${BACKEND_URL}/emails/${emailId}/assign?person=${encodeURIComponent(person)}`, {
+          method: "POST",
+        });
+        if (!res.ok) {
+          // Revert on error
+          const prevAssignment = Object.keys(assignedPersons).find(k => assignedPersons[parseInt(k)] === person);
+          setAssignedPersons(prev => {
+            const updated = { ...prev };
+            if (prevAssignment === undefined) {
+              delete updated[emailId];
+            } else {
+              updated[emailId] = assignedPersons[emailId] || "";
+            }
+            return updated;
+          });
+          showToast("Failed to assign email", "error");
+        }
+      }
+    } catch (err) {
+      console.error("Assignment error:", err);
+      showToast("Error updating assignment", "error");
     }
   }
 
@@ -1023,7 +1075,7 @@ export default function EmailsTab() {
               onToggleSelect={toggleSelect}
               savedDrafts={savedDrafts}
               assignedPersons={assignedPersons}
-              onAssignPerson={(id, person) => setAssignedPersons(prev => ({ ...prev, [id]: person }))}
+              onAssignPerson={handleAssignPerson}
             />
           </div>
         )}

@@ -295,7 +295,9 @@ export default function ManualReviewTable({
                 <td className="px-4 py-2 w-[140px]">
                   <select
                     value={assignedPerson}
-                    onChange={(e) => onAssignPerson?.(email.id, e.target.value)}
+                    onChange={(e) => {
+                      onAssignPerson?.(email.id, e.target.value);
+                    }}
                     className="w-full px-2 py-1 text-xs border border-border rounded bg-white hover:bg-gray-50 cursor-pointer"
                   >
                     <option value="">— Unassigned</option>
