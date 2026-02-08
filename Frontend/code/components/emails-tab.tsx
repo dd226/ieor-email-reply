@@ -46,7 +46,7 @@ type SyncResult = {
   last_synced_at: string | null;
 };
 
-const BACKEND_URL = "http://127.0.0.1:8000";
+const BACKEND_URL = "http://127.0.0.1:8001";
 const DRAFTS_STORAGE_KEY = "emailDrafts";
 const AUTO_SYNC_INTERVAL = 60000; // 60 seconds
 
